@@ -1,0 +1,8 @@
+anthropic
+python-dotenv
+fastapi
+uvicorn
+httpx
+bcrypt
+PyJWT
+python-multipart
