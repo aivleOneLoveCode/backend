@@ -1,0 +1,3248 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude MCP Multi-User Chat</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; height: 100vh; overflow: hidden; }
+        
+        /* Auth Modal Styles */
+        .auth-modal {
+            display: flex;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .auth-form {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            width: 400px;
+            max-width: 90vw;
+        }
+        
+        .auth-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            text-align: center;
+            color: #333;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #555;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        .auth-button {
+            width: 100%;
+            padding: 0.75rem;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-bottom: 1rem;
+        }
+        
+        .auth-button:hover {
+            background: #0056b3;
+        }
+        
+        .auth-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .auth-switch {
+            text-align: center;
+            color: #666;
+        }
+        
+        .auth-switch a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .auth-switch a:hover {
+            text-decoration: underline;
+        }
+        
+        .error-message {
+            color: #dc3545;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: #f8d7da;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        /* Main App Styles */
+        .app-container {
+            display: none;
+            width: 100%;
+            height: 100vh;
+        }
+
+        /* 사이드바 스타일 */
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            transition: width 0.3s ease;
+        }
+
+        .sidebar.collapsed {
+            width: 60px;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .sidebar-toggle {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: background-color 0.2s;
+        }
+
+        .sidebar-toggle:hover {
+            background-color: #f1f5f9;
+        }
+
+        .new-chat-btn {
+            flex: 1;
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .new-chat-btn:hover {
+            background: #5855eb;
+        }
+
+        .sidebar.collapsed .new-chat-btn {
+            display: none;
+        }
+        
+        .user-info-section {
+            padding: 8px 16px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 12px;
+            color: #64748b;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logout-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        
+        .logout-btn:hover {
+            background: #dc2626;
+        }
+        
+        .sidebar.collapsed .user-info-section {
+            display: none;
+        }
+
+        /* 워크플로우 섹션 */
+        .workflows-section {
+            height: 50%;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .workflows-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .workflows-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .workflow-controls {
+            display: flex;
+            gap: 4px;
+        }
+
+        .workflow-btn {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .workflow-btn:hover {
+            background: #5855eb;
+        }
+
+        .workflow-btn.secondary {
+            background: #10b981;
+        }
+
+        .workflow-btn.secondary:hover {
+            background: #059669;
+        }
+
+        .workflows-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .workflow-item {
+            padding: 8px 12px;
+            margin-bottom: 4px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            border: 1px solid transparent;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        }
+
+        .workflow-item:hover {
+            background-color: #f8fafc;
+        }
+
+        .workflow-item.active {
+            background-color: #ecfdf5;
+            border-color: #10b981;
+        }
+        
+        /* 프로젝트 폴더 스타일 */
+        .project-folder {
+            margin-bottom: 2px;
+        }
+        
+        .project-folder-header {
+            padding: 6px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+            user-select: none;
+        }
+        
+        .project-folder-header:hover {
+            background-color: #f8fafc;
+        }
+        
+        .folder-icon {
+            font-size: 14px;
+            width: 16px;
+            display: inline-block;
+        }
+        
+        .project-name {
+            font-weight: 500;
+            color: #374151;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .workflow-count {
+            font-size: 11px;
+            color: #6b7280;
+            margin-left: auto;
+        }
+        
+        .project-actions {
+            display: none;
+            gap: 2px;
+            margin-left: 4px;
+        }
+        
+        .project-folder-header:hover .project-actions {
+            display: flex;
+        }
+        
+        .project-folder-content {
+            margin-left: 20px;
+            border-left: 1px solid #e2e8f0;
+            transition: all 0.2s ease;
+        }
+        
+        .project-folder-content.collapsed {
+            display: none;
+        }
+        
+        .workflow-item.in-project {
+            padding: 6px 12px;
+            margin-bottom: 1px;
+            border-radius: 0;
+            border-left: none;
+            border-right: none;
+            border-top: none;
+            border-bottom: 1px solid transparent;
+            background: none;
+        }
+        
+        .workflow-item.in-project:hover {
+            background-color: #f8fafc;
+        }
+        
+        .workflow-item.in-project.active {
+            background-color: #ecfdf5;
+            border-bottom-color: #10b981;
+        }
+        
+        /* 드래그 앤 드롭 스타일 */
+        .workflow-item.dragging {
+            opacity: 0.5;
+            background-color: #f3f4f6;
+        }
+        
+        .project-folder-header.drag-over {
+            background-color: #dbeafe;
+            border: 2px dashed #3b82f6;
+        }
+        
+        .workflows-list.drag-over {
+            background-color: #fef3c7;
+            border: 2px dashed #f59e0b;
+        }
+
+        .workflow-name {
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .workflow-status {
+            font-size: 11px;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-weight: 500;
+        }
+
+        .workflow-status.active {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .workflow-status.inactive {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        .workflow-actions {
+            display: none;
+            gap: 2px;
+        }
+
+        .workflow-item:hover .workflow-actions {
+            display: flex;
+        }
+
+        .workflow-action-btn {
+            background: none;
+            border: none;
+            padding: 2px 4px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            color: #6b7280;
+            transition: all 0.2s;
+        }
+
+        .workflow-action-btn:hover {
+            background: #f1f5f9;
+            color: #374151;
+        }
+
+        .workflow-action-btn.delete:hover {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+
+        .sidebar.collapsed .workflows-section {
+            display: none;
+        }
+
+        /* 게시판 섹션 */
+        .board-section {
+            padding: 8px 16px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .board-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .board-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .board-controls {
+            display: flex;
+            gap: 4px;
+        }
+
+        .board-btn {
+            background: #8b5cf6;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .board-btn:hover {
+            background: #7c3aed;
+        }
+
+        .sidebar.collapsed .board-section {
+            display: none;
+        }
+
+        /* 세션 목록 섹션 */
+        .sessions-section {
+            height: 50%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sessions-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .sessions-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .sidebar.collapsed .sessions-section {
+            display: none;
+        }
+
+        .session-item {
+            padding: 12px;
+            margin-bottom: 4px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .session-item:hover {
+            background-color: #f8fafc;
+        }
+
+        .session-item.active {
+            background-color: #e0e7ff;
+            border-color: #6366f1;
+        }
+
+        .session-preview {
+            font-size: 14px;
+            color: #374151;
+            font-weight: 500;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .session-actions {
+            display: none;
+            gap: 4px;
+            margin-left: auto;
+        }
+        
+        .session-item:hover .session-actions {
+            display: flex;
+        }
+        
+        .session-action-btn {
+            background: none;
+            border: none;
+            padding: 4px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #6b7280;
+            transition: all 0.2s;
+        }
+        
+        .session-action-btn:hover {
+            background: #f1f5f9;
+            color: #374151;
+        }
+        
+        .session-action-btn.delete:hover {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+
+        .sidebar.collapsed .sessions-list {
+            display: none;
+        }
+
+        /* 메인 채팅 영역 */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .chat-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid #e2e8f0;
+            background: white;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .session-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .session-info {
+            font-size: 12px;
+            color: #6b7280;
+            margin-left: auto;
+        }
+
+        .status-bar {
+            padding: 8px 24px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 12px;
+            color: #6b7280;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message-user {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        .message-claude {
+            display: flex;
+            justify-content: flex-start;
+        }
+
+        .user-message {
+            background: #6366f1;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 18px 18px 6px 18px;
+            max-width: 70%;
+            word-wrap: break-word;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
+        }
+        .attached-files {
+            margin-top: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .attached-file {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 6px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+        .file-icon {
+            font-size: 14px;
+        }
+        .file-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-size {
+            opacity: 0.8;
+            font-size: 11px;
+        }
+
+        .claude-response {
+            margin-bottom: 16px;
+            line-height: 1.6;
+            color: #374151;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        /* 블록 스타일 */
+        .thinking-block, .tool-block {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            margin-bottom: 16px;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+        }
+
+        .thinking-block {
+            border-left: 4px solid #f59e0b;
+        }
+
+        .tool-block {
+            border-left: 4px solid #10b981;
+        }
+
+        .block-header {
+            padding: 8px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            border-bottom: 1px solid #f1f5f9;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+
+        .block-header:hover {
+            background-color: #f8fafc;
+        }
+
+        .thinking-block .block-header {
+            color: #92400e;
+            background: #fef3c7;
+        }
+
+        .tool-block .block-header {
+            color: #059669;
+            background: #d1fae5;
+        }
+
+        .block-toggle {
+            margin-left: auto;
+            font-size: 12px;
+            transition: transform 0.2s;
+        }
+
+        .block-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .block-content {
+            padding: 12px 16px;
+            line-height: 1.6;
+            color: #374151;
+            transition: all 0.3s ease;
+        }
+
+        .block-content.collapsed {
+            display: none;
+        }
+
+        .thinking-block .block-content {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        .tool-block .label {
+            font-weight: 600;
+            color: #374151;
+            margin-right: 8px;
+        }
+
+        .tool-block .value {
+            color: #6b7280;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #f3f4f6;
+            border-top: 2px solid #6366f1;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .thinking-dots {
+            display: inline-block;
+            color: #d97706;
+        }
+
+        .chat-input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .chat-input-form {
+            display: flex;
+            gap: 12px;
+            align-items: end;
+        }
+        .file-upload-container {
+            position: relative;
+        }
+        .file-upload-btn {
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            transition: all 0.2s;
+        }
+        .file-upload-btn:hover {
+            background: #e5e7eb;
+            border-color: #9ca3af;
+        }
+        .file-upload-btn.has-files {
+            background: #dbeafe;
+            border-color: #3b82f6;
+            color: #1d4ed8;
+        }
+        .file-input {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        .file-preview {
+            position: absolute;
+            bottom: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 12px;
+            max-width: 300px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+            display: none;
+        }
+        .file-preview.show {
+            display: block;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        .file-item-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .file-item-remove {
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chat-input {
+            flex: 1;
+            min-height: 44px;
+            max-height: 120px;
+            padding: 12px 16px;
+            border: 1px solid #d1d5db;
+            border-radius: 22px;
+            font-size: 14px;
+            resize: vertical;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            font-family: inherit;
+        }
+
+        .chat-input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .chat-input:disabled {
+            background-color: #f9fafb;
+            color: #6b7280;
+            cursor: not-allowed;
+        }
+
+        .send-button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+            flex-shrink: 0;
+        }
+
+        .send-button:hover:not(:disabled) {
+            background: #5855eb;
+        }
+
+        .send-button:disabled {
+            background: #d1d5db;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator {
+            padding: 16px 24px;
+            font-style: italic;
+            color: #6b7280;
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        .hidden {
+            display: none;
+        }
+
+        /* 반응형 디자인 */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: absolute;
+                left: -300px;
+                z-index: 1000;
+                height: 100%;
+                box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+                transition: left 0.3s ease;
+            }
+
+            .sidebar.mobile-open {
+                left: 0;
+            }
+
+            .user-message, .claude-response {
+                max-width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Authentication Modal -->
+    <div id="authModal" class="auth-modal">
+        <div class="auth-form">
+            <div id="loginForm">
+                <h2 class="auth-title">로그인</h2>
+                <form id="loginFormElement">
+                    <div class="form-group">
+                        <label for="loginEmail">이메일</label>
+                        <input type="email" id="loginEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">비밀번호</label>
+                        <input type="password" id="loginPassword" required>
+                    </div>
+                    <button type="submit" class="auth-button" id="loginButton">로그인</button>
+                    <div class="error-message" id="loginError"></div>
+                </form>
+                <div class="auth-switch">
+                    계정이 없으신가요? <a href="#" id="showRegister">회원가입</a>
+                </div>
+            </div>
+            
+            <div id="registerForm" class="hidden">
+                <h2 class="auth-title">회원가입</h2>
+                <form id="registerFormElement">
+                    <div class="form-group">
+                        <label for="registerFirstName">이름</label>
+                        <input type="text" id="registerFirstName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerLastName">성</label>
+                        <input type="text" id="registerLastName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerEmail">이메일</label>
+                        <input type="email" id="registerEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerPassword">비밀번호</label>
+                        <input type="password" id="registerPassword" required>
+                    </div>
+                    <button type="submit" class="auth-button" id="registerButton">회원가입</button>
+                    <div class="error-message" id="registerError"></div>
+                </form>
+                <div class="auth-switch">
+                    이미 계정이 있으신가요? <a href="#" id="showLogin">로그인</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Board Modal -->
+    <div id="boardModal" class="auth-modal" style="display: none;">
+        <div class="auth-form" style="width: 90vw; max-width: 1200px; height: 80vh; max-height: 800px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h2 class="auth-title" style="margin: 0;">워크플로우 게시판</h2>
+                <button id="closeBoardModal" style="background: none; border: none; font-size: 24px; cursor: pointer;">×</button>
+            </div>
+            
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                <button id="refreshBoardBtn" class="auth-button" style="padding: 8px 16px;">새로고침</button>
+                <button id="showUploadFormBtn" class="auth-button" style="padding: 8px 16px; background: #10b981;">업로드</button>
+            </div>
+            
+            <!-- Upload Form (hidden by default) -->
+            <div id="uploadForm" style="display: none; background: #f8fafc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                <h3 style="margin-bottom: 1rem;">워크플로우 공유</h3>
+                <form id="workflowShareForm">
+                    <div class="form-group">
+                        <label for="workflowSelect">워크플로우 선택</label>
+                        <select id="workflowSelect" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                            <option value="">워크플로우를 선택하세요</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="shareTitle">제목 (필수)</label>
+                        <input type="text" id="shareTitle" placeholder="제목을 입력하세요" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="shareDescription">설명</label>
+                        <textarea id="shareDescription" placeholder="설명을 입력하세요" rows="3"></textarea>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button type="submit" class="auth-button">공유하기</button>
+                        <button type="button" id="cancelUploadBtn" class="auth-button" style="background: #6b7280;">취소</button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Board Posts List -->
+            <div id="boardPostsList" style="overflow-y: auto; max-height: 500px;">
+                <!-- Posts will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Application -->
+    <div id="appContainer" class="app-container">
+        <!-- 사이드바 -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+                <button class="new-chat-btn" id="newChatBtn">새 채팅</button>
+            </div>
+            <div style="padding: 8px 16px; border-bottom: 1px solid #e2e8f0;">
+                <button class="new-chat-btn" id="openN8nBtn" style="background: #10b981; width: 100%;">n8n 열기</button>
+            </div>
+            <div class="user-info-section">
+                <div class="user-info" id="userInfo">사용자 정보</div>
+                <button class="logout-btn" id="logoutBtn">로그아웃</button>
+            </div>
+            
+            <!-- 워크플로우 섹션 -->
+            <div class="workflows-section">
+                <div class="workflows-header">
+                    <div class="workflows-title">워크플로우</div>
+                    <div class="workflow-controls">
+                        <button class="workflow-btn secondary" id="refreshWorkflowsBtn">⟳</button>
+                        <button class="workflow-btn" id="createProjectBtn" title="새 프로젝트">📁+</button>
+                        <button class="workflow-btn" id="createWorkflowBtn" title="새 워크플로우">+</button>
+                    </div>
+                </div>
+                <div class="workflows-list" id="workflowsList">
+                    <!-- 워크플로우 목록이 동적으로 추가됩니다 -->
+                </div>
+            </div>
+            
+            <!-- 게시판 섹션 -->
+            <div class="board-section">
+                <div class="board-header">
+                    <div class="board-title">워크플로우 게시판</div>
+                    <div class="board-controls">
+                        <button class="board-btn" id="viewBoardBtn" title="게시판 보기">📋</button>
+                        <button class="board-btn" id="uploadWorkflowBtn" title="워크플로우 업로드">📤</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 세션 목록 섹션 -->
+            <div class="sessions-section">
+                <div class="sessions-header">채팅방</div>
+                <div class="sessions-list" id="sessionsList">
+                    <!-- 세션 목록이 동적으로 추가됩니다 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 메인 채팅 영역 -->
+        <div class="chat-container">
+            <div class="chat-header">
+                <div class="session-title" id="sessionTitle">새 채팅</div>
+                <div class="session-info" id="sessionInfo"></div>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="status">연결 확인 중...</span>
+            </div>
+            
+            <div class="chat-messages" id="messages">
+                <div class="claude-response">
+                    안녕하세요! n8n 자동화 전문가 Claude입니다. 워크플로우 설계와 관련해서 무엇이든 물어보세요.
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <form class="chat-input-form" id="chatForm">
+                    <div class="file-upload-container">
+                        <div class="file-upload-btn" id="fileUploadBtn">
+                            📎
+                            <input type="file" class="file-input" id="fileInput" multiple accept="image/*,.pdf">
+                        </div>
+                        <div class="file-preview" id="filePreview"></div>
+                    </div>
+                    <div class="workflow-attachments" id="workflowAttachments" style="margin-bottom: 8px;"></div>
+                    <textarea 
+                        class="chat-input" 
+                        id="messageInput" 
+                        placeholder="메시지를 입력하세요..."
+                        rows="1"
+                    ></textarea>
+                    <button type="submit" class="send-button" id="sendButton">
+                        <span>→</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class MultiUserChatApp {
+            constructor() {
+                this.backendUrl = 'http://localhost:8000';
+                this.currentSessionId = null;  // 처음엔 null로 시작
+                this.isStreaming = false;
+                this.currentThinkingBlock = null;
+                this.currentClaudeBlock = null;
+                this.currentToolBlocks = new Map();
+                this.currentUser = null;
+                this.accessToken = null;
+                this.selectedN8nWorkflowId = null;
+                this.listenersInitialized = false; // 리스너 중복 등록 방지
+                this.requestInProgress = new Set(); // 중복 요청 방지
+                
+                // DOM 요소들
+                this.messagesContainer = document.getElementById('messages');
+                this.messageInput = document.getElementById('messageInput');
+                this.sendButton = document.getElementById('sendButton');
+                this.chatForm = document.getElementById('chatForm');
+                this.statusElement = document.getElementById('status');
+                this.statusDot = document.getElementById('statusDot');
+                this.sessionTitle = document.getElementById('sessionTitle');
+                this.sessionInfo = document.getElementById('sessionInfo');
+                this.sessionsList = document.getElementById('sessionsList');
+                this.sidebar = document.getElementById('sidebar');
+                this.sidebarToggle = document.getElementById('sidebarToggle');
+                this.newChatBtn = document.getElementById('newChatBtn');
+                this.workflowsList = document.getElementById('workflowsList');
+                this.selectedFiles = [];
+                this.fileInput = document.getElementById('fileInput');
+                this.fileUploadBtn = document.getElementById('fileUploadBtn');
+                this.filePreview = document.getElementById('filePreview');
+                
+                // Board elements
+                this.boardModal = document.getElementById('boardModal');
+                this.boardPostsList = document.getElementById('boardPostsList');
+                this.uploadForm = document.getElementById('uploadForm');
+                this.workflowShareForm = document.getElementById('workflowShareForm');
+                this.workflowSelect = document.getElementById('workflowSelect');
+                
+                // Attached workflows for chat
+                this.attachedWorkflows = [];
+                this.workflowAttachments = document.getElementById('workflowAttachments');
+                
+                // Loading states to prevent duplicate requests
+                this.boardLoading = false;
+                this.workflowsLoading = false;
+                this.workflowLoadCount = 0; // 디버깅용 카운터
+                
+                this.initializeAuth();
+                
+                // 전역 접근을 위해 window에 등록
+                window.chatApp = this;
+            }
+            
+            // Authentication Methods
+            initializeAuth() {
+                const token = localStorage.getItem('access_token');
+                if (token) {
+                    this.accessToken = token;
+                    this.verifyToken();
+                } else {
+                    this.showAuthModal();
+                }
+            }
+            
+            async verifyToken() {
+                // 토큰이 있으면 바로 메인 앱으로 이동 (백엔드에서 /me 엔드포인트 제거됨)
+                // 실제 토큰 유효성은 첫 API 호출 시 확인됨
+                this.showMainApp();
+            }
+            
+            showAuthModal() {
+                document.getElementById('authModal').style.display = 'flex';
+                document.getElementById('appContainer').style.display = 'none';
+            }
+            
+            showMainApp() {
+                document.getElementById('authModal').style.display = 'none';
+                document.getElementById('appContainer').style.display = 'flex';
+                
+                // 사용자 정보 표시 (로그인 시 저장된 정보 사용)
+                if (this.currentUser) {
+                    document.getElementById('userInfo').textContent = 
+                        `${this.currentUser.first_name} ${this.currentUser.last_name}`;
+                } else {
+                    document.getElementById('userInfo').textContent = '사용자';
+                }
+                
+                this.initEventListeners();
+                this.loadSessions();
+                this.loadWorkflows();
+            }
+            
+            async login(email, password) {
+                try {
+                    const response = await fetch(`${this.backendUrl}/login`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ email, password })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.accessToken = data.access_token;
+                        this.currentUser = data.user;
+                        localStorage.setItem('access_token', this.accessToken);
+                        this.showMainApp();
+                        return true;
+                    } else {
+                        const error = await response.json();
+                        throw new Error(error.detail || '로그인에 실패했습니다');
+                    }
+                } catch (error) {
+                    this.showError('loginError', error.message);
+                    return false;
+                }
+            }
+            
+            // loginToN8n 메서드 제거됨 - n8n 자동 로그인으로 불필요
+            
+            refreshN8nIfOpen(n8nUrl) {
+                // n8n이 새 탭에서 열려있는지 확인하고 새로고침
+                try {
+                    if (window.n8nWindow && !window.n8nWindow.closed) {
+                        window.n8nWindow.location.reload();
+                    }
+                } catch (error) {
+                    console.log('n8n 창 새로고침 실패:', error.message);
+                }
+            }
+            
+            openN8n() {
+                // n8n이 인증 비활성화된 상태이므로 직접 접속
+                const n8nUrl = 'http://localhost:5678';
+                window.n8nWindow = window.open(n8nUrl, 'n8n', 'width=1200,height=800');
+            }
+            
+            async register(firstName, lastName, email, password) {
+                try {
+                    const response = await fetch(`${this.backendUrl}/register`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            first_name: firstName,
+                            last_name: lastName,
+                            email,
+                            password
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.accessToken = data.access_token;
+                        this.currentUser = data.user;
+                        localStorage.setItem('access_token', this.accessToken);
+                        this.showMainApp();
+                        return true;
+                    } else {
+                        const error = await response.json();
+                        throw new Error(error.detail || '회원가입에 실패했습니다');
+                    }
+                } catch (error) {
+                    this.showError('registerError', error.message);
+                    return false;
+                }
+            }
+            
+            logout() {
+                this.accessToken = null;
+                this.currentUser = null;
+                localStorage.removeItem('access_token');
+                this.currentSessionId = null;
+                this.showAuthModal();
+                this.clearMessages();
+            }
+            
+            showError(elementId, message) {
+                const errorElement = document.getElementById(elementId);
+                errorElement.textContent = message;
+                errorElement.style.display = 'block';
+                setTimeout(() => {
+                    errorElement.style.display = 'none';
+                }, 5000);
+            }
+            
+            // API Methods with Authentication
+            async authenticatedFetch(url, options = {}) {
+                const headers = {
+                    'Authorization': `Bearer ${this.accessToken}`,
+                    ...options.headers
+                };
+                
+                const response = await fetch(url, {
+                    ...options,
+                    headers
+                });
+                
+                if (response.status === 401) {
+                    this.logout();
+                    throw new Error('인증이 필요합니다');
+                }
+                
+                return response;
+            }
+            
+            // Event Listeners Setup
+            setupAuthListeners() {
+                // Auth form listeners
+                document.getElementById('showRegister').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    document.getElementById('loginForm').classList.add('hidden');
+                    document.getElementById('registerForm').classList.remove('hidden');
+                });
+                
+                document.getElementById('showLogin').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    document.getElementById('registerForm').classList.add('hidden');
+                    document.getElementById('loginForm').classList.remove('hidden');
+                });
+                
+                document.getElementById('loginFormElement').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const email = document.getElementById('loginEmail').value;
+                    const password = document.getElementById('loginPassword').value;
+                    
+                    document.getElementById('loginButton').disabled = true;
+                    await this.login(email, password);
+                    document.getElementById('loginButton').disabled = false;
+                });
+                
+                document.getElementById('registerFormElement').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const firstName = document.getElementById('registerFirstName').value;
+                    const lastName = document.getElementById('registerLastName').value;
+                    const email = document.getElementById('registerEmail').value;
+                    const password = document.getElementById('registerPassword').value;
+                    
+                    document.getElementById('registerButton').disabled = true;
+                    await this.register(firstName, lastName, email, password);
+                    document.getElementById('registerButton').disabled = false;
+                });
+            }
+            
+            async editSessionTitle(sessionId, currentTitle) {
+                const newTitle = prompt('새 채팅방 제목을 입력하세요:', currentTitle);
+                if (newTitle && newTitle.trim() !== '' && newTitle !== currentTitle) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/sessions/${sessionId}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                title: newTitle.trim()
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            // 현재 세션이면 헤더도 업데이트
+                            if (this.currentSessionId === sessionId) {
+                                this.sessionTitle.textContent = newTitle.trim();
+                            }
+                            // 세션 목록 새로고침
+                            this.loadSessions();
+                        }
+                    } catch (error) {
+                        console.error('제목 수정 실패:', error);
+                        alert('제목 수정에 실패했습니다.');
+                    }
+                }
+            }
+            
+            async deleteSession(sessionId) {
+                if (confirm('정말로 이 채팅방을 삭제하시겠습니까?')) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/sessions/${sessionId}`, {
+                            method: 'DELETE'
+                        });
+                        
+                        if (response.ok) {
+                            // 현재 세션이 삭제된 경우 새 채팅으로 이동
+                            if (this.currentSessionId === sessionId) {
+                                this.startNewChat();
+                            }
+                            // 세션 목록 새로고침
+                            this.loadSessions();
+                        }
+                    } catch (error) {
+                        console.error('세션 삭제 실패:', error);
+                        alert('채팅방 삭제에 실패했습니다.');
+                    }
+                }
+            }
+            
+            initEventListeners() {
+                // Setup auth listeners
+                this.setupAuthListeners();
+                
+                // Main app listeners
+                document.getElementById('logoutBtn').addEventListener('click', () => {
+                    this.logout();
+                });
+                
+                this.chatForm.addEventListener('submit', (e) => this.handleSubmit(e));
+                this.messageInput.addEventListener('keydown', (e) => this.handleKeyDown(e));
+                this.messageInput.addEventListener('input', () => this.adjustTextareaHeight());
+                this.sidebarToggle.addEventListener('click', () => this.toggleSidebar());
+                this.newChatBtn.addEventListener('click', () => this.startNewChat());
+                document.getElementById('openN8nBtn').addEventListener('click', () => this.openN8n());
+                document.getElementById('refreshWorkflowsBtn').addEventListener('click', () => this.loadWorkflows());
+                document.getElementById('createProjectBtn').addEventListener('click', () => this.createProject());
+                document.getElementById('createWorkflowBtn').addEventListener('click', () => this.createWorkflow());
+                
+                // 파일 업로드 이벤트 리스너
+                this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+                this.fileUploadBtn.addEventListener('click', () => this.filePreview.classList.toggle('show'));
+                
+                // 게시판 이벤트 리스너
+                document.getElementById('viewBoardBtn').addEventListener('click', () => this.openBoard());
+                document.getElementById('uploadWorkflowBtn').addEventListener('click', () => this.showUploadForm());
+                document.getElementById('closeBoardModal').addEventListener('click', () => this.closeBoard());
+                document.getElementById('refreshBoardBtn').addEventListener('click', () => this.loadBoardPosts());
+                document.getElementById('showUploadFormBtn').addEventListener('click', () => this.toggleUploadForm());
+                document.getElementById('cancelUploadBtn').addEventListener('click', () => this.hideUploadForm());
+                this.workflowShareForm.addEventListener('submit', (e) => this.handleWorkflowShare(e));
+            }
+            
+            toggleSidebar() {
+                this.sidebar.classList.toggle('collapsed');
+            }
+            
+            startNewChat() {
+                this.currentSessionId = null;  // null로 설정하면 백엔드에서 새 UUID 생성
+                this.selectedN8nWorkflowId = null;  // 선택된 워크플로우 초기화
+                this.messagesContainer.innerHTML = `
+                    <div class="claude-response">
+                        안녕하세요! n8n 자동화 전문가 Claude입니다. 워크플로우 설계와 관련해서 무엇이든 물어보세요.
+                    </div>
+                `;
+                this.sessionTitle.textContent = '새 채팅';
+                this.sessionInfo.textContent = '';
+                
+                // 활성 세션 및 워크플로우 스타일 제거
+                document.querySelectorAll('.session-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                document.querySelectorAll('.workflow-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                
+                this.scrollToBottom();
+            }
+            
+            async loadSessions() {
+                try {
+                    const response = await this.authenticatedFetch(`${this.backendUrl}/sessions`);
+                    const data = await response.json();
+                    this.renderSessionsList(data.sessions);
+                } catch (error) {
+                    console.error('세션 목록 로드 실패:', error);
+                }
+            }
+            
+            renderSessionsList(sessions) {
+                this.sessionsList.innerHTML = '';
+                
+                sessions.forEach(session => {
+                    const sessionItem = document.createElement('div');
+                    sessionItem.className = 'session-item';
+                    sessionItem.dataset.sessionId = session.session_id;
+                    
+                    const title = session.title || '새 채팅';
+                    
+                    sessionItem.innerHTML = `
+                        <div class="session-preview">${title}</div>
+                        <div class="session-actions">
+                            <button class="session-action-btn edit" onclick="event.stopPropagation(); window.chatApp.editSessionTitle('${session.session_id}', '${title.replace(/'/g, "\\'")}')">✏️</button>
+                            <button class="session-action-btn delete" onclick="event.stopPropagation(); window.chatApp.deleteSession('${session.session_id}')">🗑️</button>
+                        </div>
+                    `;
+                    
+                    sessionItem.addEventListener('click', () => this.loadSession(session.session_id));
+                    this.sessionsList.appendChild(sessionItem);
+                });
+            }
+            
+            async loadSession(sessionId) {
+                try {
+                    // 활성 세션 스타일 업데이트
+                    document.querySelectorAll('.session-item').forEach(item => {
+                        item.classList.remove('active');
+                    });
+                    document.querySelector(`[data-session-id="${sessionId}"]`).classList.add('active');
+                    
+                    // 세션 정보 및 메시지 로드
+                    const response = await this.authenticatedFetch(`${this.backendUrl}/sessions/${sessionId}`);
+                    const data = await response.json();
+                    
+                    this.currentSessionId = sessionId;
+                    
+                    // 세션 제목 설정
+                    this.sessionTitle.textContent = data.title || sessionId.substring(0, 8) + '...';
+                    
+                    this.renderMessages(data.messages);
+                    this.scrollToBottom();
+                } catch (error) {
+                    console.error('세션 로드 실패:', error);
+                    alert('채팅방을 불러오는데 실패했습니다.');
+                }
+            }
+            
+            renderMessages(messages) {
+                this.messagesContainer.innerHTML = '';
+                
+                messages.forEach(msg => {
+                    if (msg.role === 'user') {
+                        // 사용자 메시지는 첫 번째 text 블록만 표시
+                        const textBlock = msg.content.find(block => block.type === 'text');
+                        if (textBlock) {
+                            this.addUserMessage(textBlock.text);
+                        }
+                    } else if (msg.role === 'assistant') {
+                        // assistant 메시지는 각 블록별로 처리
+                        msg.content.forEach(block => {
+                            if (block.type === 'thinking') {
+                                const thinkingBlock = this.createThinkingBlock();
+                                this.updateThinkingContent(thinkingBlock, block.thinking);
+                                this.completeThinkingBlock(thinkingBlock);
+                            } else if (block.type === 'text') {
+                                const claudeBlock = this.createClaudeBlock();
+                                claudeBlock.innerHTML = marked.parse(block.text);
+                            } else if (block.type === 'tool_use') {
+                                const toolBlock = this.createToolBlock(block.name);
+                                this.updateToolBlock(toolBlock, 'execution', {input: block.input});
+                            }
+                        });
+                    }
+                });
+                
+                this.scrollToBottom();
+            }
+            
+            // checkHealth 메서드 제거됨 - /health 엔드포인트가 백엔드에서 제거됨
+            // 연결 상태는 실제 API 호출을 통해 확인
+            
+            adjustTextareaHeight() {
+                const textarea = this.messageInput;
+                textarea.style.height = 'auto';
+                const maxHeight = 120;
+                const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+                textarea.style.height = newHeight + 'px';
+            }
+            
+            handleKeyDown(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.handleSubmit(e);
+                }
+            }
+            
+            async handleSubmit(e) {
+                e.preventDefault();
+                
+                const message = this.messageInput.value.trim();
+                if (!message || this.isStreaming) return;
+                
+                // 파일 정보와 함께 사용자 메시지 표시
+                this.addUserMessageWithFiles(message, this.selectedFiles);
+                this.messageInput.value = '';
+                this.adjustTextareaHeight();
+                
+                this.setStreaming(true);
+                
+                try {
+                    await this.sendMessage(message);
+                    // 세션 목록 새로고침은 complete 이벤트에서 처리
+                } catch (error) {
+                    this.addErrorMessage(`오류: ${error.message}`);
+                    console.error('Error:', error);
+                } finally {
+                    this.setStreaming(false);
+                    
+                    // 파일 및 워크플로우 첨부 초기화 (sendMessage 완료 후)
+                    this.selectedFiles = [];
+                    this.attachedWorkflows = [];
+                    this.fileInput.value = '';
+                    this.updateAttachmentsPreview();
+                    this.updateFileUploadButton();
+                    this.filePreview.classList.remove('show');
+                }
+            }
+            
+            setStreaming(isStreaming) {
+                this.isStreaming = isStreaming;
+                this.messageInput.disabled = isStreaming;
+                this.sendButton.disabled = isStreaming;
+                
+                if (isStreaming) {
+                    this.sendButton.innerHTML = '<div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>';
+                } else {
+                    this.sendButton.innerHTML = '<span>→</span>';
+                }
+            }
+            
+            handleFileSelect(event) {
+                const files = Array.from(event.target.files);
+                this.selectedFiles = files;
+                this.updateAttachmentsPreview();
+                this.updateFileUploadButton();
+            }
+            
+            updateFilePreview() {
+                this.updateAttachmentsPreview();
+            }
+            
+            updateAttachmentsPreview() {
+                const hasFiles = this.selectedFiles.length > 0;
+                const hasWorkflows = this.attachedWorkflows.length > 0;
+                
+                if (!hasFiles && !hasWorkflows) {
+                    this.filePreview.innerHTML = '<div style="color: #6b7280; font-size: 13px;">첨부된 파일이 없습니다</div>';
+                    this.filePreview.classList.remove('show');
+                    this.workflowAttachments.innerHTML = '';
+                    return;
+                }
+                
+                let previewHtml = '';
+                
+                // 파일 첨부 표시
+                if (hasFiles) {
+                    previewHtml += this.selectedFiles.map((file, index) => `
+                        <div class="file-item">
+                            <span class="file-item-name" title="${file.name}">📄 ${file.name}</span>
+                            <span style="color: #6b7280; font-size: 11px;">${this.formatFileSize(file.size)}</span>
+                            <button class="file-item-remove" onclick="window.chatApp.removeFile(${index})">×</button>
+                        </div>
+                    `).join('');
+                }
+                
+                // 워크플로우 첨부 표시
+                if (hasWorkflows) {
+                    previewHtml += this.attachedWorkflows.map((workflow, index) => `
+                        <div class="file-item">
+                            <span class="file-item-name" title="${workflow.workflow_name}">
+                                📋 ${workflow.workflow_name} 
+                                <small style="color: #6b7280;">(${workflow.source === 'my_workflow' ? '내 워크플로우' : '게시판'})</small>
+                            </span>
+                            <button class="file-item-remove" onclick="window.chatApp.removeAttachedWorkflow(${index})">×</button>
+                        </div>
+                    `).join('');
+                }
+                
+                this.filePreview.innerHTML = previewHtml;
+                
+                // 워크플로우 첨부 영역은 비우기 (통합된 preview에서 표시)
+                this.workflowAttachments.innerHTML = '';
+            }
+            
+            updateFileUploadButton() {
+                const totalAttachments = this.selectedFiles.length + this.attachedWorkflows.length;
+                if (totalAttachments > 0) {
+                    this.fileUploadBtn.classList.add('has-files');
+                    this.fileUploadBtn.textContent = `📎 ${totalAttachments}`;
+                } else {
+                    this.fileUploadBtn.classList.remove('has-files');
+                    this.fileUploadBtn.textContent = '📎';
+                }
+            }
+            
+            removeFile(index) {
+                this.selectedFiles.splice(index, 1);
+                this.updateAttachmentsPreview();
+                this.updateFileUploadButton();
+                
+                // input 요소의 files 속성 업데이트
+                const dt = new DataTransfer();
+                this.selectedFiles.forEach(file => dt.items.add(file));
+                this.fileInput.files = dt.files;
+            }
+            
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+            }
+            
+            async fileToBase64(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        // data:type;base64,content 형태에서 content 부분만 추출
+                        const base64 = reader.result.split(',')[1];
+                        resolve(base64);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            }
+            
+            createFileContentBlock(file, base64Content) {
+                const mimeType = file.type || 'application/octet-stream';
+                
+                // 이미지 파일
+                if (mimeType.startsWith('image/') && 
+                    ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mimeType)) {
+                    return {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mimeType,
+                            "data": base64Content
+                        }
+                    };
+                }
+                
+                // PDF 파일
+                if (mimeType === 'application/pdf') {
+                    return {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": base64Content
+                        }
+                    };
+                }
+                
+                // 지원하지 않는 파일 형식은 텍스트로 처리
+                return {
+                    "type": "text",
+                    "text": `[첨부된 파일: ${file.name} (${mimeType}, ${this.formatFileSize(file.size)}) - 지원되지 않는 형식]`
+                };
+            }
+            
+            async sendMessage(message) {
+                // 첨부된 워크플로우가 있으면 메시지에 추가
+                let enhancedMessage = message;
+                if (this.attachedWorkflows.length > 0) {
+                    const workflowInfo = this.attachedWorkflows.map(w => {
+                        if (w.source === 'my_workflow') {
+                            return `${w.workflow_name} (내 워크플로우)`;
+                        } else {
+                            return `${w.workflow_name} (게시판)`;
+                        }
+                    }).join(', ');
+                    enhancedMessage = `[첨부된 워크플로우: ${workflowInfo}] ${message}`;
+                }
+                
+                // content 배열 생성
+                const content = [{"type": "text", "text": enhancedMessage}];
+                
+                // 파일이 있으면 content에 추가
+                if (this.selectedFiles.length > 0) {
+                    for (const file of this.selectedFiles) {
+                        const fileContent = await this.fileToBase64(file);
+                        const contentBlock = this.createFileContentBlock(file, fileContent);
+                        content.push(contentBlock);
+                    }
+                }
+                
+                // 첨부된 워크플로우가 있으면 content에 추가
+                if (this.attachedWorkflows.length > 0) {
+                    for (const workflow of this.attachedWorkflows) {
+                        content.push({
+                            "type": "text",
+                            "text": `\n\n=== 첨부된 워크플로우: ${workflow.workflow_name} ===\n${JSON.stringify(workflow.workflow_json, null, 2)}\n=== 워크플로우 끝 ===`
+                        });
+                    }
+                }
+                
+                // 통합된 /chat API 사용
+                const response = await this.authenticatedFetch(`${this.backendUrl}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: content,
+                        session_id: this.currentSessionId
+                    }),
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                this.handleStreamEvent(data);
+                            } catch (error) {
+                                console.error('JSON parse error:', error);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            handleStreamEvent(data) {
+                switch (data.type) {
+                    case 'thinking_start':
+                        this.currentThinkingBlock = this.createThinkingBlock();
+                        break;
+                        
+                    case 'thinking_delta':
+                        if (this.currentThinkingBlock) {
+                            if (data.text) {
+                                this.appendToThinkingBlock(this.currentThinkingBlock, data.text);
+                            } else {
+                                this.updateThinkingDots(this.currentThinkingBlock);
+                            }
+                        }
+                        break;
+                        
+                    case 'thinking_stop':
+                        if (this.currentThinkingBlock) {
+                            this.completeThinkingBlock(this.currentThinkingBlock);
+                            this.currentThinkingBlock = null;
+                        }
+                        break;
+                        
+                    case 'text_start':
+                        this.currentClaudeBlock = this.createClaudeBlock();
+                        break;
+                        
+                    case 'text_delta':
+                        if (this.currentClaudeBlock && data.text) {
+                            this.appendToClaudeBlock(this.currentClaudeBlock, data.text);
+                        }
+                        break;
+                        
+                    case 'tool_use_start':
+                        const toolBlock = this.createToolBlock(data.name);
+                        this.currentToolBlocks.set(data.name, toolBlock);
+                        break;
+                        
+                    case 'tool_execution':
+                        const executionBlock = this.currentToolBlocks.get(data.name);
+                        if (executionBlock) {
+                            this.updateToolBlock(executionBlock, 'execution', data);
+                        }
+                        break;
+                        
+                    case 'tool_result':
+                        const resultBlock = this.currentToolBlocks.get(data.name);
+                        if (resultBlock) {
+                            this.updateToolBlock(resultBlock, 'result', data);
+                        }
+                        break;
+                        
+                    case 'tool_error':
+                        const errorBlock = this.currentToolBlocks.get(data.name);
+                        if (errorBlock) {
+                            this.updateToolBlock(errorBlock, 'error', data);
+                        }
+                        break;
+                        
+                    case 'session_id':
+                        // 백엔드에서 전달받은 세션 ID 저장
+                        if (data.session_id) {
+                            this.currentSessionId = data.session_id;
+                        }
+                        break;
+                        
+                    case 'session_created':
+                        // 새 세션이 생성되었을 때
+                        if (data.session_id) {
+                            this.currentSessionId = data.session_id;
+                            this.sessionTitle.textContent = data.title;
+                            // 세션 목록 즉시 업데이트
+                            this.loadSessions();
+                        }
+                        break;
+                        
+                    case 'complete':
+                        this.currentClaudeBlock = null;
+                        this.currentToolBlocks.clear();
+                        break;
+                }
+            }
+            
+            addUserMessage(message) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-user';
+                messageDiv.innerHTML = `<div class="user-message">${this.escapeHtml(message)}</div>`;
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+            
+            addUserMessageWithFiles(message, files = []) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-user';
+                
+                let html = `<div class="user-message">${this.escapeHtml(message)}</div>`;
+                
+                if (files.length > 0) {
+                    html += '<div class="attached-files">';
+                    files.forEach(file => {
+                        const fileIcon = this.getFileIcon(file.type);
+                        html += `
+                            <div class="attached-file">
+                                <span class="file-icon">${fileIcon}</span>
+                                <span class="file-name">${this.escapeHtml(file.name)}</span>
+                                <span class="file-size">${this.formatFileSize(file.size)}</span>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+                
+                // 첨부된 워크플로우 표시
+                if (this.attachedWorkflows.length > 0) {
+                    html += '<div class="attached-files">';
+                    this.attachedWorkflows.forEach(workflow => {
+                        html += `
+                            <div class="attached-file">
+                                <span class="file-icon">📋</span>
+                                <span class="file-name">${this.escapeHtml(workflow.workflow_name)}</span>
+                                <span class="file-size">워크플로우</span>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+                
+                messageDiv.innerHTML = html;
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+            
+            getFileIcon(mimeType) {
+                if (mimeType.startsWith('image/')) return '🖼️';
+                if (mimeType.startsWith('text/')) return '📄';
+                if (mimeType.includes('json')) return '📋';
+                if (mimeType.includes('xml')) return '📄';
+                if (mimeType.includes('csv')) return '📊';
+                return '📎';
+            }
+            
+            createLoadingIndicator() {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-claude';
+                messageDiv.innerHTML = `
+                    <div class="typing-indicator">
+                        <span>Claude가 답변을 준비하고 있습니다</span>
+                        <div class="spinner" style="display: inline-block; margin-left: 8px;"></div>
+                    </div>
+                `;
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+                return messageDiv;
+            }
+            
+            createThinkingBlock() {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-claude';
+                
+                const thinkingBlock = document.createElement('div');
+                thinkingBlock.className = 'thinking-block';
+                thinkingBlock.innerHTML = `
+                    <div class="block-header" onclick="this.parentElement.toggleCollapse()">
+                        <span>💭 생각 중<span class="spinner"></span></span>
+                        <span class="block-toggle">▼</span>
+                    </div>
+                    <div class="block-content"></div>
+                `;
+                
+                // 접기/펼치기 기능 추가
+                thinkingBlock.toggleCollapse = function() {
+                    const content = this.querySelector('.block-content');
+                    const toggle = this.querySelector('.block-toggle');
+                    content.classList.toggle('collapsed');
+                    toggle.classList.toggle('collapsed');
+                };
+                
+                // thinking 텍스트 저장 변수 추가
+                thinkingBlock.thinkingText = '';
+                
+                messageDiv.appendChild(thinkingBlock);
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+                
+                return thinkingBlock;
+            }
+            
+            updateThinkingDots(block) {
+                const blockContent = block.querySelector('.block-content');
+                if (blockContent && !block.thinkingText) {
+                    let dots = blockContent.textContent || '';
+                    if (dots.length >= 3) {
+                        dots = '';
+                    } else {
+                        dots += '.';
+                    }
+                    blockContent.textContent = dots;
+                    this.scrollToBottom();
+                }
+            }
+            
+            updateThinkingContent(block, text) {
+                const blockContent = block.querySelector('.block-content');
+                if (blockContent) {
+                    blockContent.textContent = text;
+                    this.scrollToBottom();
+                }
+            }
+            
+            appendToThinkingBlock(block, text) {
+                block.thinkingText += text;
+                const blockContent = block.querySelector('.block-content');
+                if (blockContent) {
+                    blockContent.textContent = block.thinkingText;
+                    
+                    // 스크롤을 디바운스하여 성능 향상
+                    clearTimeout(block.scrollTimeout);
+                    block.scrollTimeout = setTimeout(() => {
+                        this.scrollToBottom();
+                    }, 50);
+                }
+            }
+            
+            completeThinkingBlock(block, summary) {
+                const headerSpan = block.querySelector('.block-header span');
+                const spinner = block.querySelector('.spinner');
+                
+                if (headerSpan) {
+                    headerSpan.innerHTML = '💭 생각 완료';
+                }
+                if (spinner) {
+                    spinner.remove();
+                }
+                
+                // summary는 사용하지 않음 - 실시간 스트리밍된 내용을 그대로 유지
+            }
+            
+            createClaudeBlock() {
+                const claudeResponse = document.createElement('div');
+                claudeResponse.className = 'claude-response';
+                
+                // 마크다운 콘텐츠를 위한 변수
+                claudeResponse.markdownContent = '';
+                
+                this.messagesContainer.appendChild(claudeResponse);
+                this.scrollToBottom();
+                
+                return claudeResponse;
+            }
+            
+            appendToClaudeBlock(block, text) {
+                block.markdownContent += text;
+                // 마크다운을 HTML로 변환하여 직접 블록에 적용
+                block.innerHTML = marked.parse(block.markdownContent);
+                
+                // 스크롤을 디바운스하여 성능 향상
+                clearTimeout(block.scrollTimeout);
+                block.scrollTimeout = setTimeout(() => {
+                    this.scrollToBottom();
+                }, 50);
+            }
+            
+            createToolBlock(toolName) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-claude';
+                
+                const toolBlock = document.createElement('div');
+                toolBlock.className = 'tool-block';
+                toolBlock.innerHTML = `
+                    <div class="block-header" onclick="this.parentElement.toggleCollapse()">
+                        <span>🔧 도구: ${this.escapeHtml(toolName)}<span class="spinner"></span></span>
+                        <span class="block-toggle collapsed">▼</span>
+                    </div>
+                    <div class="block-content collapsed">
+                        <span class="label">상태:</span>
+                        <span class="value">실행 중...</span>
+                    </div>
+                `;
+                
+                // 접기/펼치기 기능 추가
+                toolBlock.toggleCollapse = function() {
+                    const content = this.querySelector('.block-content');
+                    const toggle = this.querySelector('.block-toggle');
+                    content.classList.toggle('collapsed');
+                    toggle.classList.toggle('collapsed');
+                };
+                
+                messageDiv.appendChild(toolBlock);
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+                
+                return toolBlock;
+            }
+            
+            updateToolBlock(block, type, data) {
+                const contentDiv = block.querySelector('.block-content');
+                const headerSpan = block.querySelector('.block-header span');
+                const spinner = block.querySelector('.spinner');
+                
+                if (!contentDiv) return;
+                
+                if (type === 'execution') {
+                    contentDiv.innerHTML += `<br><span class="label">입력값:</span> <span class="value">${this.escapeHtml(JSON.stringify(data.input))}</span>`;
+                } else if (type === 'result') {
+                    // 스피너 제거하고 완료 표시
+                    if (headerSpan) {
+                        headerSpan.innerHTML = headerSpan.innerHTML.replace('<span class="spinner"></span>', '');
+                    }
+                    if (spinner) {
+                        spinner.remove();
+                    }
+                    
+                    // 상태 업데이트
+                    const statusValue = contentDiv.querySelector('.value');
+                    if (statusValue) {
+                        statusValue.textContent = '완료';
+                    }
+                    
+                    contentDiv.innerHTML += `<br><span class="label">결과:</span> <span class="value">${this.escapeHtml(data.result)}</span>`;
+                } else if (type === 'error') {
+                    // 스피너 제거하고 오류 표시
+                    if (headerSpan) {
+                        headerSpan.innerHTML = headerSpan.innerHTML.replace('<span class="spinner"></span>', '');
+                    }
+                    if (spinner) {
+                        spinner.remove();
+                    }
+                    
+                    // 상태 업데이트
+                    const statusValue = contentDiv.querySelector('.value');
+                    if (statusValue) {
+                        statusValue.textContent = '오류';
+                        statusValue.style.color = '#dc2626';
+                    }
+                    
+                    contentDiv.innerHTML += `<br><span class="label" style="color: #dc2626;">오류:</span> <span class="value" style="color: #dc2626;">${this.escapeHtml(data.error)}</span>`;
+                }
+            }
+            
+            addErrorMessage(message) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-claude';
+                messageDiv.innerHTML = `
+                    <div class="claude-response" style="color: #dc2626; border: 1px solid #ef4444; background: #fef2f2; padding: 12px; border-radius: 8px;">
+                        ${this.escapeHtml(message)}
+                    </div>
+                `;
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+            
+            addSystemMessage(message) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message message-claude';
+                messageDiv.innerHTML = `
+                    <div class="claude-response" style="color: #059669; border: 1px solid #10b981; background: #ecfdf5; padding: 12px; border-radius: 8px; font-style: italic;">
+                        💡 ${this.escapeHtml(message)}
+                    </div>
+                `;
+                this.messagesContainer.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+            
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            clearMessages() {
+                this.messagesContainer.innerHTML = `
+                    <div class="claude-response">
+                        안녕하세요! n8n 자동화 전문가 Claude입니다. 워크플로우 설계와 관련해서 무엇이든 물어보세요.
+                    </div>
+                `;
+            }
+            
+            scrollToBottom() {
+                setTimeout(() => {
+                    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+                }, 0);
+            }
+            
+            // Workflow Management Methods
+            async loadWorkflows() {
+                try {
+                    // 프로젝트와 워크플로우 목록을 동시에 로드
+                    const [workflowsResponse, projectsResponse] = await Promise.all([
+                        this.authenticatedFetch(`${this.backendUrl}/workflows`),
+                        this.authenticatedFetch(`${this.backendUrl}/projects`)
+                    ]);
+                    
+                    const workflowsData = await workflowsResponse.json();
+                    const projectsData = await projectsResponse.json();
+                    
+                    this.renderWorkflowsList(workflowsData.workflows, projectsData.projects);
+                } catch (error) {
+                    console.error('워크플로우 목록 로드 실패:', error);
+                }
+            }
+            
+            renderWorkflowsList(workflows, projects) {
+                this.workflowsList.innerHTML = '';
+                
+                // 프로젝트별로 워크플로우 그룹화
+                const projectMap = new Map();
+                const unassignedWorkflows = [];
+                
+                // 프로젝트 맵 생성
+                projects.forEach(project => {
+                    projectMap.set(project.project_id, {
+                        ...project,
+                        workflows: [],
+                        expanded: false
+                    });
+                });
+                
+                // 워크플로우를 프로젝트별로 분류
+                workflows.forEach(workflow => {
+                    if (workflow.project_id && projectMap.has(workflow.project_id)) {
+                        projectMap.get(workflow.project_id).workflows.push(workflow);
+                    } else {
+                        unassignedWorkflows.push(workflow);
+                    }
+                });
+                
+                // 프로젝트 폴더들 렌더링
+                projectMap.forEach((project, projectId) => {
+                    this.renderProjectFolder(project);
+                });
+                
+                // 프로젝트에 속하지 않은 워크플로우들 렌더링
+                unassignedWorkflows.forEach(workflow => {
+                    this.renderWorkflowItem(workflow, false);
+                });
+                
+                // 워크플로우 영역에 드롭 존 설정 (한 번만 설정)
+                if (!this.workflowsList.hasAttribute('data-drop-setup')) {
+                    this.workflowsList.addEventListener('dragover', (e) => {
+                        // 프로젝트 폴더가 아닌 워크플로우 영역에서만 허용
+                        if (!e.target.closest('.project-folder')) {
+                            this.handleWorkflowAreaDragOver(e);
+                        }
+                    });
+                    this.workflowsList.addEventListener('dragleave', (e) => this.handleWorkflowAreaDragLeave(e));
+                    this.workflowsList.addEventListener('drop', (e) => {
+                        // 프로젝트 폴더가 아닌 워크플로우 영역에서만 제거 처리
+                        if (!e.target.closest('.project-folder')) {
+                            this.handleUnassignDrop(e);
+                        }
+                    });
+                    this.workflowsList.setAttribute('data-drop-setup', 'true');
+                }
+                
+                if (projects.length === 0 && workflows.length === 0) {
+                    this.workflowsList.innerHTML = `
+                        <div style="text-align: center; color: #6b7280; padding: 12px; font-size: 12px;">
+                            워크플로우가 없습니다.<br>
+                            <small>n8n에서 만든 후 등록하세요.</small>
+                        </div>
+                    `;
+                }
+            }
+            
+            renderProjectFolder(project) {
+                const projectFolder = document.createElement('div');
+                projectFolder.className = 'project-folder';
+                projectFolder.dataset.projectId = project.project_id;
+                
+                const folderHeader = document.createElement('div');
+                folderHeader.className = 'project-folder-header';
+                folderHeader.innerHTML = `
+                    <span class="folder-icon">${project.expanded ? '📂' : '📁'}</span>
+                    <span class="project-name">${project.name}</span>
+                    <span class="workflow-count">(${project.workflows.length})</span>
+                    <div class="project-actions">
+                        <button class="workflow-action-btn" onclick="event.stopPropagation(); window.chatApp.editProjectName(this, '${project.project_id}')" title="이름 변경">✏️</button>
+                        <button class="workflow-action-btn delete" onclick="event.stopPropagation(); window.chatApp.deleteProject('${project.project_id}')" title="프로젝트 삭제">🗑️</button>
+                    </div>
+                `;
+                
+                folderHeader.addEventListener('click', () => this.toggleProjectFolder(project.project_id));
+                
+                // 프로젝트 폴더에 드롭 존 추가
+                folderHeader.addEventListener('dragover', (e) => this.handleDragOver(e));
+                folderHeader.addEventListener('dragleave', (e) => this.handleDragLeave(e));
+                folderHeader.addEventListener('drop', (e) => this.handleProjectDrop(e, project.project_id));
+                
+                projectFolder.appendChild(folderHeader);
+                
+                const folderContent = document.createElement('div');
+                folderContent.className = `project-folder-content ${project.expanded ? '' : 'collapsed'}`;
+                
+                project.workflows.forEach(workflow => {
+                    const workflowElement = this.createWorkflowElement(workflow, true);
+                    folderContent.appendChild(workflowElement);
+                });
+                
+                projectFolder.appendChild(folderContent);
+                this.workflowsList.appendChild(projectFolder);
+            }
+            
+            renderWorkflowItem(workflow, isInProject = false) {
+                const workflowElement = this.createWorkflowElement(workflow, isInProject);
+                this.workflowsList.appendChild(workflowElement);
+            }
+            
+            createWorkflowElement(workflow, isInProject) {
+                const workflowItem = document.createElement('div');
+                workflowItem.className = `workflow-item ${isInProject ? 'in-project' : ''}`;
+                workflowItem.dataset.workflowId = workflow.workflow_id;
+                workflowItem.draggable = true;
+                
+                const statusIcon = workflow.status === 'active' ? '🟢' : '⚫';
+                const statusTitle = workflow.status === 'active' ? '활성화됨 - 클릭해서 비활성화' : '비활성화됨 - 클릭해서 활성화';
+                
+                workflowItem.innerHTML = `
+                    <div class="workflow-name">${workflow.title}</div>
+                    <div class="workflow-actions">
+                        <button class="workflow-action-btn status-btn" onclick="event.stopPropagation(); window.chatApp.toggleWorkflowStatus('${workflow.workflow_id}')" title="${statusTitle}">${statusIcon}</button>
+                        <button class="workflow-action-btn" onclick="event.stopPropagation(); window.chatApp.attachMyWorkflowToChat('${workflow.workflow_id}', '${workflow.title}')" title="채팅에 첨부">📎</button>
+                        <button class="workflow-action-btn" onclick="event.stopPropagation(); window.chatApp.editWorkflowName(this, '${workflow.workflow_id}')" title="이름 변경">✏️</button>
+                        <button class="workflow-action-btn" onclick="event.stopPropagation(); window.chatApp.openWorkflowInN8n('${workflow.workflow_id}')" title="n8n에서 열기">🔗</button>
+                        <button class="workflow-action-btn delete" onclick="event.stopPropagation(); window.chatApp.deleteWorkflow('${workflow.workflow_id}')" title="워크플로우 삭제">🗑️</button>
+                    </div>
+                `;
+                
+                // 드래그 앤 드롭 이벤트
+                workflowItem.addEventListener('dragstart', (e) => this.handleDragStart(e));
+                workflowItem.addEventListener('dragend', (e) => this.handleDragEnd(e));
+                
+                // 워크플로우 클릭 시 더 이상 선택하지 않음 (첨부 버튼 사용)
+                return workflowItem;
+            }
+            
+            toggleProjectFolder(projectId) {
+                const projectFolder = document.querySelector(`[data-project-id="${projectId}"]`);
+                const folderContent = projectFolder.querySelector('.project-folder-content');
+                const folderIcon = projectFolder.querySelector('.folder-icon');
+                
+                const isExpanded = !folderContent.classList.contains('collapsed');
+                
+                if (isExpanded) {
+                    folderContent.classList.add('collapsed');
+                    folderIcon.textContent = '📁';
+                } else {
+                    folderContent.classList.remove('collapsed');
+                    folderIcon.textContent = '📂';
+                }
+            }
+            
+            async createWorkflow() {
+                alert('워크플로우는 n8n-mcp 서버를 통해 자동으로 등록됩니다. Claude에게 워크플로우 생성을 요청해주세요.');
+            }
+            
+            // 드래그 앤 드롭 핸들러들
+            handleDragStart(e) {
+                e.dataTransfer.setData('text/plain', e.target.dataset.workflowId);
+                e.target.classList.add('dragging');
+            }
+            
+            handleDragEnd(e) {
+                e.target.classList.remove('dragging');
+                // 모든 드롭 존의 하이라이트 제거
+                document.querySelectorAll('.drag-over').forEach(el => {
+                    el.classList.remove('drag-over');
+                });
+                this.workflowsList.classList.remove('drag-over');
+            }
+            
+            handleDragOver(e) {
+                e.preventDefault();
+                e.currentTarget.classList.add('drag-over');
+            }
+            
+            handleDragLeave(e) {
+                // 자식 요소로 이동하는 경우가 아닐 때만 하이라이트 제거
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                    e.currentTarget.classList.remove('drag-over');
+                }
+            }
+            
+            handleWorkflowAreaDragOver(e) {
+                e.preventDefault();
+                this.workflowsList.classList.add('drag-over');
+            }
+            
+            handleWorkflowAreaDragLeave(e) {
+                // 워크플로우 영역을 벗어날 때만 하이라이트 제거
+                if (!this.workflowsList.contains(e.relatedTarget)) {
+                    this.workflowsList.classList.remove('drag-over');
+                }
+            }
+            
+            async handleProjectDrop(e, projectId) {
+                e.preventDefault();
+                e.currentTarget.classList.remove('drag-over');
+                
+                const workflowId = e.dataTransfer.getData('text/plain');
+                if (workflowId) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/workflows/${workflowId}/project`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                project_id: projectId
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.loadWorkflows();
+                        } else {
+                            alert('워크플로우를 프로젝트에 할당하는데 실패했습니다.');
+                        }
+                    } catch (error) {
+                        console.error('워크플로우 프로젝트 할당 실패:', error);
+                        alert('워크플로우를 프로젝트에 할당하는데 실패했습니다.');
+                    }
+                }
+            }
+            
+            async handleUnassignDrop(e) {
+                e.preventDefault();
+                this.workflowsList.classList.remove('drag-over');
+                
+                const workflowId = e.dataTransfer.getData('text/plain');
+                if (workflowId) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/workflows/${workflowId}/project`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                project_id: null
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.loadWorkflows();
+                        } else {
+                            alert('워크플로우를 프로젝트에서 제거하는데 실패했습니다.');
+                        }
+                    } catch (error) {
+                        console.error('워크플로우 프로젝트 제거 실패:', error);
+                        alert('워크플로우를 프로젝트에서 제거하는데 실패했습니다.');
+                    }
+                }
+            }
+
+            async createProject() {
+                const projectName = prompt('새 프로젝트 이름을 입력하세요:');
+                if (projectName && projectName.trim()) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/projects`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                name: projectName.trim()
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            this.loadWorkflows();
+                        } else {
+                            alert('프로젝트 생성에 실패했습니다.');
+                        }
+                    } catch (error) {
+                        console.error('프로젝트 생성 실패:', error);
+                        alert('프로젝트 생성에 실패했습니다.');
+                    }
+                }
+            }
+            
+            async editProjectName(button, projectId) {
+                const requestKey = `editProject_${projectId}`;
+                if (this.requestInProgress.has(requestKey)) return;
+                this.requestInProgress.add(requestKey);
+                
+                const nameElement = button.closest('.project-folder-header').querySelector('.project-name');
+                const currentName = nameElement.textContent;
+                const newName = prompt('프로젝트 이름을 입력하세요:', currentName);
+                if (newName && newName.trim() !== '' && newName !== currentName) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/projects/${projectId}`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                name: newName.trim()
+                            })
+                        });
+                        
+                        if (response.ok) {
+                            nameElement.textContent = newName.trim();
+                        } else {
+                            alert('프로젝트 이름 변경에 실패했습니다.');
+                        }
+                    } catch (error) {
+                        console.error('프로젝트 이름 변경 실패:', error);
+                        alert('프로젝트 이름 변경에 실패했습니다.');
+                    }
+                }
+                this.requestInProgress.delete(requestKey);
+            }
+            
+            async deleteProject(projectId) {
+                if (confirm('정말로 이 프로젝트를 삭제하시겠습니까? 프로젝트 내 워크플로우들은 프로젝트에서 제거됩니다.')) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/projects/${projectId}`, {
+                            method: 'DELETE'
+                        });
+                        
+                        if (response.ok) {
+                            this.loadWorkflows();
+                        } else {
+                            alert('프로젝트 삭제에 실패했습니다.');
+                        }
+                    } catch (error) {
+                        console.error('프로젝트 삭제 실패:', error);
+                        alert('프로젝트 삭제에 실패했습니다.');
+                    }
+                }
+            }
+            
+            async toggleWorkflowStatus(workflowId) {
+                const requestKey = `toggleWorkflow_${workflowId}`;
+                if (this.requestInProgress.has(requestKey)) return;
+                this.requestInProgress.add(requestKey);
+                
+                try {
+                    const response = await this.authenticatedFetch(`${this.backendUrl}/workflows/${workflowId}/toggle`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        console.log(result.message);
+                        this.loadWorkflows(); // 목록 새로고침해서 상태 업데이트
+                    } else {
+                        alert('워크플로우 상태 변경에 실패했습니다.');
+                    }
+                } catch (error) {
+                    console.error('워크플로우 상태 변경 실패:', error);
+                    alert('워크플로우 상태 변경에 실패했습니다.');
+                }
+                this.requestInProgress.delete(requestKey);
+            }
+            
+            async deleteWorkflow(workflowId) {
+                if (confirm('정말로 이 워크플로우를 삭제하시겠습니까?')) {
+                    try {
+                        const response = await this.authenticatedFetch(`${this.backendUrl}/workflows/${workflowId}`, {
+                            method: 'DELETE'
+                        });
+                        
+                        if (response.ok) {
+                            this.loadWorkflows();
+                            alert('워크플로우가 삭제되었습니다.');
+                        } else {
+                            alert('워크플로우 삭제에 실패했습니다.');
+                        }
+                    } catch (error) {
+                        console.error('워크플로우 삭제 실패:', error);
+                        alert('워크플로우 삭제에 실패했습니다.');
+                    }
+                }
+            }
+            
+            editWorkflowName(button, workflowId) {
+                const requestKey = `editWorkflow_${workflowId}`;
+                if (this.requestInProgress.has(requestKey)) return;
+                this.requestInProgress.add(requestKey);
+                
+                const nameElement = button.closest('.workflow-item').querySelector('.workflow-name');
+                const currentName = nameElement.textContent;
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = currentName;
+                input.className = 'workflow-name-edit';
+                input.style.cssText = `
+                    width: 100%;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    padding: 2px 4px;
+                    font-size: inherit;
+                    font-family: inherit;
+                    background: white;
+                `;
+                
+                // 원래 텍스트를 input으로 교체
+                nameElement.style.display = 'none';
+                nameElement.parentNode.insertBefore(input, nameElement);
+                input.focus();
+                input.select();
+                
+                const finishEdit = async (save = false) => {
+                    if (save && input.value.trim() && input.value.trim() !== currentName) {
+                        const success = await this.updateWorkflowName(workflowId, input.value.trim());
+                        if (!success) {
+                            // 실패시 원래 이름으로 되돌림
+                            nameElement.textContent = currentName;
+                        }
+                    } else {
+                        // 취소시 원래 이름으로 되돌림
+                        nameElement.textContent = currentName;
+                    }
+                    
+                    // input 제거하고 원래 element 보이기
+                    input.remove();
+                    nameElement.style.display = '';
+                    this.requestInProgress.delete(requestKey);
+                };
+                
+                input.addEventListener('blur', () => finishEdit(true));
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        finishEdit(true);
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        finishEdit(false);
+                    }
+                });
+            }
+            
+            async updateWorkflowName(workflowId, newName) {
+                const requestKey = `updateWorkflow_${workflowId}`;
+                if (this.requestInProgress.has(requestKey)) return false;
+                this.requestInProgress.add(requestKey);
+                
+                try {
+                    const response = await this.authenticatedFetch(`${this.backendUrl}/workflows/${workflowId}/name`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            name: newName
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        this.loadWorkflows();
+                        return true;
+                    } else {
+                        alert('워크플로우 이름 변경에 실패했습니다.');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('워크플로우 이름 변경 실패:', error);
+                    alert('워크플로우 이름 변경에 실패했습니다.');
+                    return false;
+                } finally {
+                    this.requestInProgress.delete(requestKey);
+                }
+            }
+            
+            selectWorkflow(workflowId) {
+                // 선택된 워크플로우 스타일 업데이트
+                document.querySelectorAll('.workflow-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                const selectedItem = document.querySelector(`[data-workflow-id="${workflowId}"]`);
+                if (selectedItem) {
+                    selectedItem.classList.add('active');
+                    this.selectedN8nWorkflowId = workflowId;
+                    
+                    // 선택된 워크플로우 정보를 채팅 헤더에 표시
+                    const workflowName = selectedItem.querySelector('.workflow-name').textContent;
+                    this.sessionInfo.textContent = `선택된 워크플로우: ${workflowName}`;
+                    
+                    // 채팅에 워크플로우 선택 안내 메시지 추가
+                    this.addSystemMessage(`워크플로우 "${workflowName}"이 선택되었습니다. 이 워크플로우에 대해 질문하거나 실행을 요청하세요.`);
+                }
+            }
+            
+            openWorkflowInN8n(workflowId) {
+                const n8nUrl = `http://localhost:5678/workflow/${workflowId}`;
+                window.open(n8nUrl, 'n8n-workflow', 'width=1200,height=800');
+            }
+            
+            // Board Methods
+            openBoard() {
+                this.boardModal.style.display = 'flex';
+                this.loadBoardPosts();
+            }
+            
+            closeBoard() {
+                this.boardModal.style.display = 'none';
+                this.hideUploadForm();
+            }
+            
+            showUploadForm() {
+                this.openBoard();
+                this.loadWorkflowsForShare();
+                this.uploadForm.style.display = 'block';
+            }
+            
+            async toggleUploadForm() {
+                const isVisible = this.uploadForm.style.display === 'block';
+                if (isVisible) {
+                    this.uploadForm.style.display = 'none';
+                } else {
+                    await this.loadWorkflowsForShare();
+                    this.uploadForm.style.display = 'block';
+                }
+            }
+            
+            hideUploadForm() {
+                this.uploadForm.style.display = 'none';
+                this.workflowShareForm.reset();
+                
+                // 수정 모드 리셋
+                this.workflowShareForm.dataset.editMode = 'false';
+                this.workflowShareForm.dataset.postId = '';
+                document.querySelector('#uploadForm h3').textContent = '워크플로우 공유';
+                document.querySelector('#workflowShareForm button[type="submit"]').textContent = '공유하기';
+            }
+            
+            async loadBoardPosts(limit = 50, offset = 0) {
+                if (this.boardLoading) return; // 이미 로딩 중이면 중단
+                
+                this.boardLoading = true;
+                try {
+                    const response = await fetch(`${this.backendUrl}/board/posts?limit=${limit}&offset=${offset}`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.accessToken}`
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        this.renderBoardPosts(result.posts, result);
+                    } else {
+                        throw new Error('게시글 로드 실패');
+                    }
+                } catch (error) {
+                    console.error('게시글 로드 오류:', error);
+                    alert('게시글을 불러오는데 실패했습니다.');
+                } finally {
+                    this.boardLoading = false;
+                }
+            }
+            
+            renderBoardPosts(posts, paginationInfo) {
+                // 페이징 컨트롤 추가 (총 개수가 0이어도 표시)
+                let paginationHtml = '';
+                if (paginationInfo) {
+                    const { total, limit, offset, has_more } = paginationInfo;
+                    const currentPage = total > 0 ? Math.floor(offset / limit) + 1 : 1;
+                    const totalPages = total > 0 ? Math.ceil(total / limit) : 1;
+                    
+                    paginationHtml = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-bottom: 1px solid #e5e7eb;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label for="pageLimitSelect">표시 개수:</label>
+                                <select id="pageLimitSelect" style="padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px;">
+                                    <option value="10" ${limit === 10 ? 'selected' : ''}>10개</option>
+                                    <option value="50" ${limit === 50 ? 'selected' : ''}>50개</option>
+                                    <option value="100" ${limit === 100 ? 'selected' : ''}>100개</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <button ${offset === 0 ? 'disabled' : ''} onclick="chatApp.loadBoardPosts(${limit}, ${Math.max(0, offset - limit)})" 
+                                        style="padding: 4px 8px; background: ${offset === 0 ? '#f3f4f6' : '#3b82f6'}; color: ${offset === 0 ? '#9ca3af' : 'white'}; border: none; border-radius: 4px; cursor: ${offset === 0 ? 'not-allowed' : 'pointer'};">
+                                    이전
+                                </button>
+                                <span style="font-size: 14px; color: #6b7280;">${currentPage} / ${totalPages} (총 ${total}개)</span>
+                                <button ${!has_more ? 'disabled' : ''} onclick="chatApp.loadBoardPosts(${limit}, ${offset + limit})" 
+                                        style="padding: 4px 8px; background: ${!has_more ? '#f3f4f6' : '#3b82f6'}; color: ${!has_more ? '#9ca3af' : 'white'}; border: none; border-radius: 4px; cursor: ${!has_more ? 'not-allowed' : 'pointer'};">
+                                    다음
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (!posts || posts.length === 0) {
+                    this.boardPostsList.innerHTML = paginationHtml + '<div style="text-align: center; color: #6b7280; padding: 2rem;">등록된 워크플로우가 없습니다.</div>';
+                    return;
+                }
+                
+                const postsHtml = posts.map(post => `
+                    <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; background: white;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                            <h4 style="margin: 0; color: #374151;">${post.title}</h4>
+                            <small style="color: #6b7280;">${new Date(post.created_at).toLocaleDateString()}</small>
+                        </div>
+                        <p style="color: #6b7280; margin: 0.5rem 0; font-size: 14px;">${post.description}</p>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
+                            <div>
+                                <span style="font-size: 12px; color: #374151; font-weight: 500;">워크플로우: ${post.workflow_name}</span>
+                                <span style="margin-left: 1rem; font-size: 12px; color: #6b7280;">다운로드: ${post.download_count}회</span>
+                                <span style="margin-left: 1rem; font-size: 12px; color: #6b7280;">작성자: ${post.author_name}</span>
+                            </div>
+                            <div>
+                                ${post.user_id === chatApp.currentUser?.user_id ? 
+                                    `<button onclick="chatApp.editBoardPost('${post.post_id}')" 
+                                            style="background: #f59e0b; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; margin-left: 4px;">
+                                        수정
+                                    </button>` : ''
+                                }
+                                <button onclick="chatApp.attachWorkflowToChat('${post.post_id}')" 
+                                        style="background: #10b981; color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer; margin-left: 4px;">
+                                    채팅에 첨부
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                this.boardPostsList.innerHTML = paginationHtml + postsHtml;
+                
+                // 표시 개수 변경 이벤트 리스너 추가 (중복 방지)
+                if (paginationInfo) {
+                    setTimeout(() => {
+                        const limitSelect = document.getElementById('pageLimitSelect');
+                        if (limitSelect && !limitSelect.dataset.listenerAdded) {
+                            limitSelect.dataset.listenerAdded = 'true';
+                            limitSelect.addEventListener('change', (e) => {
+                                const newLimit = parseInt(e.target.value);
+                                this.loadBoardPosts(newLimit, 0); // 첫 페이지로 이동
+                            });
+                        }
+                    }, 0);
+                }
+            }
+            
+            async loadWorkflowsForShare() {
+                if (this.workflowsLoading) {
+                    console.log('이미 워크플로우 로딩 중입니다. 요청 무시.');
+                    return; // 이미 로딩 중이면 중단
+                }
+                
+                this.workflowLoadCount++;
+                this.workflowsLoading = true;
+                try {
+                    console.log(`=== 워크플로우 로딩 시작 (${this.workflowLoadCount}번째) ===`);
+                    console.log('workflowSelect 요소:', this.workflowSelect);
+                    
+                    // workflowSelect 요소를 다시 찾기 (DOM이 업데이트될 수 있음)
+                    const workflowSelectElement = document.getElementById('workflowSelect');
+                    console.log('DOM에서 찾은 workflowSelect:', workflowSelectElement);
+                    
+                    if (!workflowSelectElement) {
+                        console.error('workflowSelect 요소를 찾을 수 없습니다!');
+                        return;
+                    }
+                    
+                    const response = await fetch(`${this.backendUrl}/workflows`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.accessToken}`
+                        }
+                    });
+                    
+                    console.log('워크플로우 응답 상태:', response.status);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('받은 전체 응답 데이터:', data);
+                        
+                        const workflows = data.workflows; // 백엔드에서 {workflows: [...]} 형태로 응답
+                        console.log('추출된 워크플로우 배열:', workflows);
+                        
+                        // 워크플로우 선택 옵션 업데이트 (DOM에서 직접 찾은 요소 사용)
+                        workflowSelectElement.innerHTML = '<option value="">워크플로우를 선택하세요</option>';
+                        console.log('기본 옵션 추가됨');
+                        
+                        if (workflows && workflows.length > 0) {
+                            workflows.forEach((workflow, index) => {
+                                console.log(`워크플로우 ${index}:`, workflow);
+                                const option = document.createElement('option');
+                                // 백엔드에서 workflow_id, title로 반환됨
+                                option.value = workflow.workflow_id;
+                                option.textContent = workflow.title;
+                                option.dataset.workflowName = workflow.title;
+                                workflowSelectElement.appendChild(option);
+                                console.log(`옵션 추가됨: ${workflow.title}`);
+                            });
+                            console.log(`총 ${workflows.length}개의 워크플로우가 추가되었습니다.`);
+                            console.log('최종 select 옵션 개수:', workflowSelectElement.options.length);
+                        } else {
+                            console.log('워크플로우가 없거나 빈 배열입니다.');
+                            const option = document.createElement('option');
+                            option.value = '';
+                            option.textContent = '등록된 워크플로우가 없습니다';
+                            option.disabled = true;
+                            workflowSelectElement.appendChild(option);
+                        }
+                    } else {
+                        const errorText = await response.text();
+                        console.error('워크플로우 로드 실패:', response.status, errorText);
+                        throw new Error(`워크플로우 목록 로드 실패: ${response.status}`);
+                    }
+                } catch (error) {
+                    console.error('워크플로우 목록 로드 오류:', error);
+                    alert('워크플로우 목록을 불러오는데 실패했습니다: ' + error.message);
+                } finally {
+                    this.workflowsLoading = false;
+                }
+            }
+            
+            async handleWorkflowShare(e) {
+                e.preventDefault();
+                
+                const isEditMode = this.workflowShareForm.dataset.editMode === 'true';
+                const requestKey = isEditMode ? 'workflow-update' : 'workflow-share';
+                
+                if (this.requestInProgress.has(requestKey)) {
+                    return;
+                }
+                this.requestInProgress.add(requestKey);
+                
+                try {
+                    const workflowId = document.getElementById('workflowSelect').value;
+                    const selectedOption = document.getElementById('workflowSelect').selectedOptions[0];
+                    const workflowName = selectedOption?.dataset.workflowName || '';
+                    const title = document.getElementById('shareTitle').value;
+                    const description = document.getElementById('shareDescription').value;
+                    
+                    if (!workflowId) {
+                        alert('워크플로우를 선택해주세요.');
+                        return;
+                    }
+                    
+                    if (!title.trim()) {
+                        alert('제목을 입력해주세요.');
+                        return;
+                    }
+                    
+                    const postData = {
+                        title: title.trim(),
+                        description: description.trim(),
+                        workflow_id: workflowId,
+                        workflow_name: workflowName
+                    };
+                    
+                    let url, method, successMessage;
+                    
+                    if (isEditMode) {
+                        const postId = this.workflowShareForm.dataset.postId;
+                        url = `${this.backendUrl}/board/posts/${postId}`;
+                        method = 'PUT';
+                        successMessage = '워크플로우가 성공적으로 수정되었습니다!';
+                    } else {
+                        url = `${this.backendUrl}/board/posts`;
+                        method = 'POST';
+                        successMessage = '워크플로우가 성공적으로 공유되었습니다!';
+                    }
+                    
+                    const response = await fetch(url, {
+                        method: method,
+                        headers: {
+                            'Authorization': `Bearer ${this.accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(postData)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        alert(successMessage);
+                        this.hideUploadForm();
+                        this.loadBoardPosts(); // 게시글 목록 새로고침
+                    } else {
+                        throw new Error(result.detail || (isEditMode ? '수정 실패' : '공유 실패'));
+                    }
+                } catch (error) {
+                    console.error(isEditMode ? '수정 오류:' : '공유 오류:', error);
+                    alert(`워크플로우 ${isEditMode ? '수정' : '공유'}에 실패했습니다: ` + error.message);
+                } finally {
+                    this.requestInProgress.delete(requestKey);
+                }
+            }
+            
+            async editBoardPost(postId) {
+                try {
+                    // 게시글 정보 조회
+                    const response = await fetch(`${this.backendUrl}/board/posts/${postId}`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.accessToken}`
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('게시글 정보를 불러올 수 없습니다');
+                    }
+                    
+                    const post = await response.json();
+                    
+                    // 워크플로우 목록 로드
+                    await this.loadWorkflowsForShare();
+                    
+                    // 폼에 기존 값 설정
+                    document.getElementById('workflowSelect').value = post.workflow_id;
+                    document.getElementById('shareTitle').value = post.title;
+                    document.getElementById('shareDescription').value = post.description;
+                    
+                    // 폼 제목 변경
+                    document.querySelector('#uploadForm h3').textContent = '워크플로우 수정';
+                    document.querySelector('#workflowShareForm button[type="submit"]').textContent = '수정하기';
+                    
+                    // 수정 모드 표시
+                    this.workflowShareForm.dataset.editMode = 'true';
+                    this.workflowShareForm.dataset.postId = postId;
+                    
+                    // 폼 표시
+                    this.openBoard();
+                    this.uploadForm.style.display = 'block';
+                    
+                } catch (error) {
+                    console.error('게시글 수정 준비 오류:', error);
+                    alert('게시글 수정 준비에 실패했습니다.');
+                }
+            }
+            
+            async attachWorkflowToChat(postId) {
+                try {
+                    const response = await fetch(`${this.backendUrl}/board/posts/${postId}/download`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.accessToken}`
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        
+                        // 이미 첨부된 워크플로우인지 확인
+                        const existingIndex = this.attachedWorkflows.findIndex(w => w.post_id === postId);
+                        if (existingIndex !== -1) {
+                            alert('이미 첨부된 워크플로우입니다.');
+                            return;
+                        }
+                        
+                        // 워크플로우 첨부
+                        const workflow = {
+                            post_id: postId,
+                            workflow_name: data.workflow_name,
+                            workflow_json: data.workflow_json
+                        };
+                        
+                        this.attachedWorkflows.push(workflow);
+                        this.updateWorkflowAttachmentsDisplay();
+                        
+                        // 게시판 모달 닫기
+                        this.closeBoard();
+                        
+                        alert(`워크플로우 "${data.workflow_name}"이 채팅에 첨부되었습니다!`);
+                    } else {
+                        throw new Error('워크플로우 로드 실패');
+                    }
+                } catch (error) {
+                    console.error('워크플로우 첨부 오류:', error);
+                    alert('워크플로우 첨부에 실패했습니다.');
+                }
+            }
+            
+            updateWorkflowAttachmentsDisplay() {
+                // 통합된 첨부 표시로 변경
+                this.updateAttachmentsPreview();
+                this.updateFileUploadButton();
+            }
+            
+            removeAttachedWorkflow(index) {
+                this.attachedWorkflows.splice(index, 1);
+                this.updateWorkflowAttachmentsDisplay();
+            }
+            
+            async attachMyWorkflowToChat(workflowId, workflowTitle) {
+                try {
+                    // 이미 첨부된 워크플로우인지 확인 (내 워크플로우는 workflow_id로 구분)
+                    const existingIndex = this.attachedWorkflows.findIndex(w => w.workflow_id === workflowId);
+                    if (existingIndex !== -1) {
+                        alert('이미 첨부된 워크플로우입니다.');
+                        return;
+                    }
+                    
+                    // 내 워크플로우에서 JSON 데이터 가져오기 (n8n API 호출)
+                    const response = await fetch(`${this.backendUrl}/workflows/${workflowId}/json`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.accessToken}`
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const workflowJson = await response.json();
+                        
+                        // 워크플로우 첨부
+                        const workflow = {
+                            workflow_id: workflowId, // 내 워크플로우는 workflow_id 사용
+                            workflow_name: workflowTitle,
+                            workflow_json: workflowJson,
+                            source: 'my_workflow' // 구분을 위한 소스 정보
+                        };
+                        
+                        this.attachedWorkflows.push(workflow);
+                        this.updateWorkflowAttachmentsDisplay();
+                        
+                        console.log('내 워크플로우 첨부 완료:', workflowTitle);
+                    } else {
+                        throw new Error('워크플로우 데이터 조회 실패');
+                    }
+                } catch (error) {
+                    console.error('내 워크플로우 첨부 오류:', error);
+                    alert('워크플로우 첨부에 실패했습니다.');
+                }
+            }
+        }
+        
+        // 애플리케이션 시작 - 인증 리스너만 먼저 설정
+        const app = new MultiUserChatApp();
+        
+        // 인증 관련 이벤트 리스너는 바로 설정
+        document.getElementById('showRegister').addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('registerForm').classList.remove('hidden');
+        });
+        
+        document.getElementById('showLogin').addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('registerForm').classList.add('hidden');
+            document.getElementById('loginForm').classList.remove('hidden');
+        });
+        
+        document.getElementById('loginFormElement').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            document.getElementById('loginButton').disabled = true;
+            await app.login(email, password);
+            document.getElementById('loginButton').disabled = false;
+        });
+        
+        document.getElementById('registerFormElement').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const firstName = document.getElementById('registerFirstName').value;
+            const lastName = document.getElementById('registerLastName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            
+            document.getElementById('registerButton').disabled = true;
+            await app.register(firstName, lastName, email, password);
+            document.getElementById('registerButton').disabled = false;
+        });
+    </script>
+</body>
+</html>
