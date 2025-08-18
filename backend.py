@@ -2,10 +2,10 @@ import asyncio
 import json
 import httpx
 import os
-import sqlite3
 import uuid
 import bcrypt
 import jwt
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Depends, status, Header
@@ -15,6 +15,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from anthropic import Anthropic
 from dotenv import load_dotenv
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 load_dotenv()
 
@@ -107,37 +109,59 @@ class BoardPostUpdate(BaseModel):
 
 # Database 작업 함수들
 class DatabaseManager:
-    def __init__(self, db_path: str = "claude_multi_user.db"):
-        self.db_path = db_path
+    def __init__(self):
+        self.db_config = {
+            'host': os.getenv('DB_HOST', 'postgres'),
+            'port': os.getenv('DB_PORT', '5432'),
+            'database': os.getenv('DB_NAME', 'backend'),
+            'user': os.getenv('DB_USER', 'backend_user'),
+            'password': os.getenv('DB_PASSWORD', 'backend_password')
+        }
         self.init_database()
+    
+    def get_connection(self):
+        """PostgreSQL 연결 생성 (재시도 로직 포함)"""
+        max_retries = 30
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                return psycopg2.connect(**self.db_config)
+            except psycopg2.OperationalError as e:
+                if attempt < max_retries - 1:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] PostgreSQL 연결 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(retry_delay)
+                else:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] PostgreSQL 연결 최종 실패: {e}")
+                    raise
     
     def init_database(self):
         """데이터베이스 초기화 및 테이블 생성"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         # Users 테이블
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                email TEXT UNIQUE NOT NULL,
-                first_name TEXT NOT NULL,
-                last_name TEXT NOT NULL,
-                password TEXT NOT NULL,
-                api_key TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                user_id VARCHAR(255) PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                first_name VARCHAR(255) NOT NULL,
+                last_name VARCHAR(255) NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                api_key VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
         # Sessions 테이블
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                session_id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
@@ -145,11 +169,11 @@ class DatabaseManager:
         # Messages 테이블
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS messages (
-                message_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                message_id VARCHAR(255) PRIMARY KEY,
+                session_id VARCHAR(255) NOT NULL,
+                role VARCHAR(50) NOT NULL CHECK(role IN ('user', 'assistant')),
                 content TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (session_id) REFERENCES sessions (session_id)
             )
         ''')
@@ -157,25 +181,25 @@ class DatabaseManager:
         # Projects 테이블
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS projects (
-                project_id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                project_id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
         
-        # Workflows 테이블 (n8n_workflow_id를 기본키로 사용)
+        # Workflows 테이블 (workflow_id를 기본키로 사용)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS workflows (
-                n8n_workflow_id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                project_id TEXT,
-                name TEXT NOT NULL DEFAULT 'Untitled Workflow',
-                status TEXT DEFAULT 'inactive' CHECK(status IN ('active', 'inactive')),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                workflow_id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                project_id VARCHAR(255),
+                name VARCHAR(255) NOT NULL DEFAULT 'Untitled Workflow',
+                status VARCHAR(50) DEFAULT 'inactive' CHECK(status IN ('active', 'inactive')),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id),
                 FOREIGN KEY (project_id) REFERENCES projects (project_id)
             )
@@ -184,23 +208,23 @@ class DatabaseManager:
         # Board Posts 테이블 (워크플로우 공유 게시판)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS board_posts (
-                post_id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                title TEXT NOT NULL,
+                post_id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                title VARCHAR(255) NOT NULL,
                 description TEXT,
-                workflow_id TEXT NOT NULL,
-                workflow_name TEXT NOT NULL,
+                workflow_id VARCHAR(255) NOT NULL,
+                workflow_name VARCHAR(255) NOT NULL,
                 tags TEXT,
                 download_count INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
         
         conn.commit()
         conn.close()
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] database initialized: {self.db_path}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] PostgreSQL database initialized")
     
     # 유저 메서드
     def create_user(self, email: str, first_name: str, last_name: str, password: str):
@@ -209,52 +233,52 @@ class DatabaseManager:
         api_key = str(uuid.uuid4())  # API 키 생성
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute('''
                 INSERT INTO users (user_id, email, first_name, last_name, password, api_key)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             ''', (user_id, email, first_name, last_name, hashed_password, api_key))
             
             conn.commit()
             conn.close()
             return user_id
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
             conn.close()
             raise HTTPException(status_code=400, detail="이미 존재하는 이메일입니다")
     
     def authenticate_user(self, email: str, password: str):
         """사용자 인증"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
             SELECT user_id, password, first_name, last_name 
-            FROM users WHERE email = ?
+            FROM users WHERE email = %s
         ''', (email,))
         
         result = cursor.fetchone()
         conn.close()
         
-        if result and bcrypt.checkpw(password.encode('utf-8'), result[1].encode('utf-8')):
+        if result and bcrypt.checkpw(password.encode('utf-8'), result["password"].encode('utf-8')):
             return {
-                "user_id": result[0],
+                "user_id": result["user_id"],
                 "email": email,
-                "first_name": result[2],
-                "last_name": result[3]
+                "first_name": result["first_name"],
+                "last_name": result["last_name"]
             }
         return None
     
     def get_user_by_id(self, user_id: str):
         """사용자 ID로 사용자 정보 조회"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
             SELECT user_id, email, first_name, last_name, api_key 
-            FROM users WHERE user_id = ?
+            FROM users WHERE user_id = %s
         ''', (user_id,))
         
         result = cursor.fetchone()
@@ -262,11 +286,11 @@ class DatabaseManager:
         
         if result:
             return {
-                "user_id": result[0],
-                "email": result[1],
-                "first_name": result[2],
-                "last_name": result[3],
-                "api_key": result[4]
+                "user_id": result["user_id"],
+                "email": result["email"],
+                "first_name": result["first_name"],
+                "last_name": result["last_name"],
+                "api_key": result["api_key"]
             }
         return None
     
@@ -276,12 +300,15 @@ class DatabaseManager:
         if not session_id:
             session_id = str(uuid.uuid4())
         
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT OR REPLACE INTO sessions (session_id, user_id, title, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO sessions (session_id, user_id, title, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (session_id) DO UPDATE SET
+                title = EXCLUDED.title,
+                updated_at = CURRENT_TIMESTAMP
         ''', (session_id, user_id, title))
         
         conn.commit()
@@ -291,13 +318,13 @@ class DatabaseManager:
     
     def update_session_title(self, session_id: str, title: str, user_id: str):
         """세션 제목 업데이트"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             UPDATE sessions 
-            SET title = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE session_id = ? AND user_id = ?
+            SET title = %s, updated_at = CURRENT_TIMESTAMP 
+            WHERE session_id = %s AND user_id = %s
         ''', (title, session_id, user_id))
         
         conn.commit()
@@ -305,19 +332,19 @@ class DatabaseManager:
     
     def delete_session(self, session_id: str, user_id: str):
         """세션 삭제"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         # 메시지 먼저 삭제
         cursor.execute('''
             DELETE FROM messages 
-            WHERE session_id = ?
+            WHERE session_id = %s
         ''', (session_id,))
         
         # 세션 삭제
         cursor.execute('''
             DELETE FROM sessions 
-            WHERE session_id = ? AND user_id = ?
+            WHERE session_id = %s AND user_id = %s
         ''', (session_id, user_id))
         
         conn.commit()
@@ -327,19 +354,19 @@ class DatabaseManager:
         """메시지를 데이터베이스에 저장"""
         message_id = str(uuid.uuid4())
         
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             INSERT INTO messages (message_id, session_id, role, content)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
         ''', (message_id, session_id, role, content))
         
         # 세션 업데이트 시간 갱신
         cursor.execute('''
             UPDATE sessions 
             SET updated_at = CURRENT_TIMESTAMP 
-            WHERE session_id = ?
+            WHERE session_id = %s
         ''', (session_id,))
         
         conn.commit()
@@ -349,13 +376,13 @@ class DatabaseManager:
     
     def get_user_sessions(self, user_id: str):
         """사용자의 모든 세션 목록 조회"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
             SELECT session_id, title, created_at, updated_at
             FROM sessions 
-            WHERE user_id = ?
+            WHERE user_id = %s
             ORDER BY updated_at DESC
         ''', (user_id,))
         
@@ -365,23 +392,23 @@ class DatabaseManager:
         sessions = []
         for row in rows:
             sessions.append({
-                "session_id": row[0],
-                "title": row[1],
-                "created_at": row[2],
-                "updated_at": row[3]
+                "session_id": row["session_id"],
+                "title": row["title"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"]
             })
         
         return sessions
     
     def get_session_messages(self, session_id: str, user_id: str):
         """세션의 메시지 기록을 조회 (사용자 권한 확인)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         # 세션이 해당 사용자 것인지 확인
         cursor.execute('''
             SELECT session_id FROM sessions 
-            WHERE session_id = ? AND user_id = ?
+            WHERE session_id = %s AND user_id = %s
         ''', (session_id, user_id))
         
         if not cursor.fetchone():
@@ -390,7 +417,7 @@ class DatabaseManager:
         
         cursor.execute('''
             SELECT role, content FROM messages 
-            WHERE session_id = ? 
+            WHERE session_id = %s 
             ORDER BY created_at ASC
         ''', (session_id,))
         
@@ -398,7 +425,9 @@ class DatabaseManager:
         conn.close()
         
         messages = []
-        for role, content_json in rows:
+        for row in rows:
+            role = row["role"]
+            content_json = row["content"]
             try:
                 if content_json.startswith('[') or content_json.startswith('{'):
                     content = json.loads(content_json)
@@ -411,30 +440,30 @@ class DatabaseManager:
         return messages
     
     # 워크플로우 메서드
-    def create_workflow(self, user_id: str, n8n_workflow_id: str, name: str = "Untitled Workflow"):
+    def create_workflow(self, user_id: str, workflow_id: str, name: str = "Untitled Workflow"):
         """새 워크플로우 생성"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO workflows (n8n_workflow_id, user_id, name)
-            VALUES (?, ?, ?)
-        ''', (n8n_workflow_id, user_id, name))
+            INSERT INTO workflows (workflow_id, user_id, name)
+            VALUES (%s, %s, %s)
+        ''', (workflow_id, user_id, name))
         
         conn.commit()
         conn.close()
         
-        return n8n_workflow_id
+        return workflow_id
     
     def get_user_workflows(self, user_id: str):
         """사용자의 모든 워크플로우 목록 조회 (workflow_id, 제목, project_id, status 반환)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
-            SELECT n8n_workflow_id, name, project_id, status
+            SELECT workflow_id, name, project_id, status
             FROM workflows 
-            WHERE user_id = ?
+            WHERE user_id = %s
             ORDER BY updated_at DESC
         ''', (user_id,))
         
@@ -444,23 +473,23 @@ class DatabaseManager:
         workflows = []
         for row in rows:
             workflows.append({
-                "workflow_id": row[0],
-                "title": row[1],
-                "project_id": row[2],  # None일 수 있음
-                "status": row[3] or "inactive"  # 기본값 inactive
+                "workflow_id": row["workflow_id"],
+                "title": row["name"],
+                "project_id": row["project_id"],  # None일 수 있음
+                "status": row["status"] or "inactive"  # 기본값 inactive
             })
         
         return workflows
     
     def get_user_workflows_simple(self, user_id: str):
         """API용: 사용자의 워크플로우 목록 조회 (workflow_id, 제목만 반환)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
-            SELECT n8n_workflow_id, name
+            SELECT workflow_id, name
             FROM workflows 
-            WHERE user_id = ?
+            WHERE user_id = %s
             ORDER BY updated_at DESC
         ''', (user_id,))
         
@@ -470,22 +499,22 @@ class DatabaseManager:
         workflows = []
         for row in rows:
             workflows.append({
-                "workflow_id": row[0],
-                "title": row[1]
+                "workflow_id": row["workflow_id"],
+                "title": row["name"]
             })
         
         return workflows
     
-    def update_workflow_status(self, n8n_workflow_id: str, status: str, user_id: str):
+    def update_workflow_status(self, workflow_id: str, status: str, user_id: str):
         """워크플로우 상태 업데이트"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             UPDATE workflows 
-            SET status = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE n8n_workflow_id = ? AND user_id = ?
-        ''', (status, n8n_workflow_id, user_id))
+            SET status = %s, updated_at = CURRENT_TIMESTAMP 
+            WHERE workflow_id = %s AND user_id = %s
+        ''', (status, workflow_id, user_id))
         
         rows_affected = cursor.rowcount
         conn.commit()
@@ -493,16 +522,16 @@ class DatabaseManager:
         
         return rows_affected > 0
     
-    def update_workflow_name(self, n8n_workflow_id: str, name: str, user_id: str):
+    def update_workflow_name(self, workflow_id: str, name: str, user_id: str):
         """워크플로우 이름 업데이트"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             UPDATE workflows 
-            SET name = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE n8n_workflow_id = ? AND user_id = ?
-        ''', (name, n8n_workflow_id, user_id))
+            SET name = %s, updated_at = CURRENT_TIMESTAMP 
+            WHERE workflow_id = %s AND user_id = %s
+        ''', (name, workflow_id, user_id))
         
         affected_rows = cursor.rowcount
         conn.commit()
@@ -510,40 +539,40 @@ class DatabaseManager:
         
         return affected_rows > 0
     
-    def delete_workflow(self, n8n_workflow_id: str, user_id: str):
+    def delete_workflow(self, workflow_id: str, user_id: str):
         """워크플로우 삭제"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             DELETE FROM workflows 
-            WHERE n8n_workflow_id = ? AND user_id = ?
-        ''', (n8n_workflow_id, user_id))
+            WHERE workflow_id = %s AND user_id = %s
+        ''', (workflow_id, user_id))
         
         conn.commit()
         conn.close()
     
-    def get_workflow_by_id(self, n8n_workflow_id: str, user_id: str):
+    def get_workflow_by_id(self, workflow_id: str, user_id: str):
         """워크플로우 ID로 워크플로우 정보 조회"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
-            SELECT n8n_workflow_id, name, status, created_at, updated_at
+            SELECT workflow_id, name, status, created_at, updated_at
             FROM workflows 
-            WHERE n8n_workflow_id = ? AND user_id = ?
-        ''', (n8n_workflow_id, user_id))
+            WHERE workflow_id = %s AND user_id = %s
+        ''', (workflow_id, user_id))
         
         result = cursor.fetchone()
         conn.close()
         
         if result:
             return {
-                "n8n_workflow_id": result[0],
-                "name": result[1],
-                "status": result[2],
-                "created_at": result[3],
-                "updated_at": result[4]
+                "workflow_id": result["workflow_id"],
+                "name": result["name"],
+                "status": result["status"],
+                "created_at": result["created_at"],
+                "updated_at": result["updated_at"]
             }
         return None
     
@@ -552,12 +581,12 @@ class DatabaseManager:
         """새 프로젝트 생성"""
         project_id = str(uuid.uuid4())
         
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             INSERT INTO projects (project_id, user_id, name)
-            VALUES (?, ?, ?)
+            VALUES (%s, %s, %s)
         ''', (project_id, user_id, name))
         
         conn.commit()
@@ -567,13 +596,13 @@ class DatabaseManager:
     
     def get_user_projects(self, user_id: str):
         """사용자의 모든 프로젝트 목록 조회"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
             SELECT project_id, name, created_at, updated_at
             FROM projects 
-            WHERE user_id = ?
+            WHERE user_id = %s
             ORDER BY updated_at DESC
         ''', (user_id,))
         
@@ -583,23 +612,23 @@ class DatabaseManager:
         projects = []
         for row in rows:
             projects.append({
-                "project_id": row[0],
-                "name": row[1],
-                "created_at": row[2],
-                "updated_at": row[3]
+                "project_id": row["project_id"],
+                "name": row["name"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"]
             })
         
         return projects
     
     def update_project_name(self, project_id: str, name: str, user_id: str):
         """프로젝트 이름 업데이트"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             UPDATE projects 
-            SET name = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE project_id = ? AND user_id = ?
+            SET name = %s, updated_at = CURRENT_TIMESTAMP 
+            WHERE project_id = %s AND user_id = %s
         ''', (name, project_id, user_id))
         
         affected_rows = cursor.rowcount
@@ -610,35 +639,35 @@ class DatabaseManager:
     
     def delete_project(self, project_id: str, user_id: str):
         """프로젝트 삭제 (해당 프로젝트의 워크플로우들은 project_id를 NULL로 설정)"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         # 프로젝트 소속 워크플로우들의 project_id를 NULL로 설정
         cursor.execute('''
             UPDATE workflows 
             SET project_id = NULL, updated_at = CURRENT_TIMESTAMP 
-            WHERE project_id = ? AND user_id = ?
+            WHERE project_id = %s AND user_id = %s
         ''', (project_id, user_id))
         
         # 프로젝트 삭제
         cursor.execute('''
             DELETE FROM projects 
-            WHERE project_id = ? AND user_id = ?
+            WHERE project_id = %s AND user_id = %s
         ''', (project_id, user_id))
         
         conn.commit()
         conn.close()
     
-    def assign_workflow_to_project(self, n8n_workflow_id: str, project_id: str, user_id: str):
+    def assign_workflow_to_project(self, workflow_id: str, project_id: str, user_id: str):
         """워크플로우를 프로젝트에 할당"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             UPDATE workflows 
-            SET project_id = ?, updated_at = CURRENT_TIMESTAMP 
-            WHERE n8n_workflow_id = ? AND user_id = ?
-        ''', (project_id, n8n_workflow_id, user_id))
+            SET project_id = %s, updated_at = CURRENT_TIMESTAMP 
+            WHERE workflow_id = %s AND user_id = %s
+        ''', (project_id, workflow_id, user_id))
         
         affected_rows = cursor.rowcount
         conn.commit()
@@ -651,12 +680,12 @@ class DatabaseManager:
         """새 게시글 생성"""
         post_id = str(uuid.uuid4())
         
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             INSERT INTO board_posts (post_id, user_id, title, description, workflow_id, workflow_name)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         ''', (post_id, user_id, title, description, workflow_id, workflow_name))
         
         conn.commit()
@@ -666,12 +695,12 @@ class DatabaseManager:
     
     def get_board_posts(self, limit: int = 50, offset: int = 0):
         """게시글 목록 조회 with pagination"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         # 전체 게시글 수 조회
-        cursor.execute('SELECT COUNT(*) FROM board_posts')
-        total_count = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) as count FROM board_posts')
+        total_count = cursor.fetchone()["count"]
         
         cursor.execute('''
             SELECT bp.post_id, bp.user_id, bp.title, bp.description, bp.workflow_id, 
@@ -680,7 +709,7 @@ class DatabaseManager:
             FROM board_posts bp
             JOIN users u ON bp.user_id = u.user_id
             ORDER BY bp.created_at DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         ''', (limit, offset))
         
         posts = cursor.fetchall()
@@ -688,16 +717,16 @@ class DatabaseManager:
         
         posts_data = [
             {
-                "post_id": post[0],
-                "user_id": post[1],
-                "title": post[2],
-                "description": post[3],
-                "workflow_id": post[4],
-                "workflow_name": post[5],
-                "download_count": post[6],
-                "created_at": post[7],
-                "updated_at": post[8],
-                "author_name": f"{post[9]} {post[10]}"
+                "post_id": post["post_id"],
+                "user_id": post["user_id"],
+                "title": post["title"],
+                "description": post["description"],
+                "workflow_id": post["workflow_id"],
+                "workflow_name": post["workflow_name"],
+                "download_count": post["download_count"],
+                "created_at": post["created_at"],
+                "updated_at": post["updated_at"],
+                "author_name": f"{post['first_name']} {post['last_name']}"
             }
             for post in posts
         ]
@@ -712,8 +741,8 @@ class DatabaseManager:
     
     def get_board_post_by_id(self, post_id: str):
         """게시글 ID로 조회"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         cursor.execute('''
             SELECT bp.post_id, bp.user_id, bp.title, bp.description, bp.workflow_id, 
@@ -721,7 +750,7 @@ class DatabaseManager:
                    u.first_name, u.last_name
             FROM board_posts bp
             JOIN users u ON bp.user_id = u.user_id
-            WHERE bp.post_id = ?
+            WHERE bp.post_id = %s
         ''', (post_id,))
         
         post = cursor.fetchone()
@@ -729,39 +758,39 @@ class DatabaseManager:
         
         if post:
             return {
-                "post_id": post[0],
-                "user_id": post[1],
-                "title": post[2],
-                "description": post[3],
-                "workflow_id": post[4],
-                "workflow_name": post[5],
-                "download_count": post[6],
-                "created_at": post[7],
-                "updated_at": post[8],
-                "author_name": f"{post[9]} {post[10]}"
+                "post_id": post["post_id"],
+                "user_id": post["user_id"],
+                "title": post["title"],
+                "description": post["description"],
+                "workflow_id": post["workflow_id"],
+                "workflow_name": post["workflow_name"],
+                "download_count": post["download_count"],
+                "created_at": post["created_at"],
+                "updated_at": post["updated_at"],
+                "author_name": f"{post['first_name']} {post['last_name']}"
             }
         return None
     
     def update_board_post(self, post_id: str, user_id: str, title: str = None, description: str = None, 
                          workflow_id: str = None, workflow_name: str = None):
         """게시글 수정"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         updates = []
         params = []
         
         if title is not None:
-            updates.append("title = ?")
+            updates.append("title = %s")
             params.append(title)
         if description is not None:
-            updates.append("description = ?")
+            updates.append("description = %s")
             params.append(description)
         if workflow_id is not None:
-            updates.append("workflow_id = ?")
+            updates.append("workflow_id = %s")
             params.append(workflow_id)
         if workflow_name is not None:
-            updates.append("workflow_name = ?")
+            updates.append("workflow_name = %s")
             params.append(workflow_name)
         
         if updates:
@@ -771,7 +800,7 @@ class DatabaseManager:
             cursor.execute(f'''
                 UPDATE board_posts 
                 SET {", ".join(updates)}
-                WHERE post_id = ? AND user_id = ?
+                WHERE post_id = %s AND user_id = %s
             ''', params)
             
             affected_rows = cursor.rowcount
@@ -785,12 +814,12 @@ class DatabaseManager:
     
     def delete_board_post(self, post_id: str, user_id: str):
         """게시글 삭제"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             DELETE FROM board_posts 
-            WHERE post_id = ? AND user_id = ?
+            WHERE post_id = %s AND user_id = %s
         ''', (post_id, user_id))
         
         affected_rows = cursor.rowcount
@@ -801,13 +830,13 @@ class DatabaseManager:
     
     def increment_download_count(self, post_id: str):
         """다운로드 수 증가"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute('''
             UPDATE board_posts 
             SET download_count = download_count + 1
-            WHERE post_id = ?
+            WHERE post_id = %s
         ''', (post_id,))
         
         conn.commit()
@@ -850,13 +879,14 @@ def verify_user_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
         raise HTTPException(status_code=401, detail="API key required")
     
     # 데이터베이스에서 API 키로 사용자 조회
-    conn = sqlite3.connect("claude_multi_user.db")
-    cursor = conn.cursor()
+    db = DatabaseManager()
+    conn = db.get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     
     cursor.execute('''
         SELECT user_id, email, first_name, last_name 
         FROM users 
-        WHERE api_key = ?
+        WHERE api_key = %s
     ''', (x_api_key,))
     
     user = cursor.fetchone()
@@ -866,17 +896,17 @@ def verify_user_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
         raise HTTPException(status_code=401, detail="Invalid API key")
     
     return {
-        "user_id": user[0],
-        "email": user[1],
-        "first_name": user[2],
-        "last_name": user[3]
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "first_name": user["first_name"],
+        "last_name": user["last_name"]
     }
 
 class ClaudeMCPBackend:
     def __init__(self):
         self.anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        self.mcp_url = "http://localhost:3000/mcp"
-        self.auth_token = "4PsvmU2knXt+KTV+d2sOFTly6C9C+9QAwdbqnd9uFVw="
+        self.mcp_url = os.getenv("MCP_SERVER_URL")
+        self.auth_token = os.getenv("MCP_AUTH_TOKEN")
         self.db = DatabaseManager()
         
         # 서버 시작 시 정적 파일들 로드
@@ -1000,96 +1030,112 @@ class ClaudeMCPBackend:
         
         # 8. While 문 돌기
         while True:
-            with self.anthropic.messages.stream(
-                model="claude-sonnet-4-20250514",
-                max_tokens=16000,
-                thinking={"type": "enabled", "budget_tokens": 10000},
-                tools=self.tools,
-                system=self.system,
-                extra_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
-                messages=messages
-            ) as stream:
-                
-                thinking_text = ""
-                current_block_type = None
-                
-                for event in stream:
-                    if event.type == "content_block_start":
-                        current_block_type = event.content_block.type
-                        if current_block_type == "thinking":
-                            yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
-                        elif current_block_type == "text":
-                            yield f"data: {json.dumps({'type': 'text_start'})}\n\n"
-                        elif current_block_type == "tool_use":
-                            yield f"data: {json.dumps({'type': 'tool_use_start', 'name': event.content_block.name})}\n\n"
+            try:
+                with self.anthropic.messages.stream(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=16000,
+                    thinking={"type": "enabled", "budget_tokens": 10000},
+                    tools=self.tools,
+                    system=self.system,
+                    extra_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
+                    messages=messages
+                ) as stream:
                     
-                    elif event.type == "content_block_delta":
-                        if event.delta.type == "thinking_delta":
-                            thinking_text += event.delta.thinking
-                            yield f"data: {json.dumps({'type': 'thinking_delta', 'text': event.delta.thinking})}\n\n"
-                            await asyncio.sleep(0)
-                        elif event.delta.type == "text_delta":
-                            yield f"data: {json.dumps({'type': 'text_delta', 'text': event.delta.text})}\n\n"
-                            await asyncio.sleep(0)
+                    thinking_text = ""
+                    current_block_type = None
                     
-                    elif event.type == "content_block_stop":
-                        if current_block_type == "thinking":
-                            yield f"data: {json.dumps({'type': 'thinking_stop'})}\n\n"
-                            thinking_text = ""
-                
-                # Usage 로그 출력 및 메시지 추출
-                message_obj = stream.get_final_message()
-                usage = message_obj.usage                
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] USAGE - Input: {usage.input_tokens}, Output: {usage.output_tokens}, Cache Create: {usage.cache_creation_input_tokens}, Cache Read: {usage.cache_read_input_tokens}")
-                
-                # response_content를 JSON 직렬화 가능한 형태로 변환
-                assistant_content = []
-                for block in message_obj.content:
-                    if hasattr(block, 'model_dump'):
-                        assistant_content.append(block.model_dump())
-                    else:
-                        assistant_content.append({"type": "text", "text": str(block)})
-                
-                # 어시스턴트 응답을 데이터베이스에 저장
-                self.db.save_message(session_id, "assistant", json.dumps(assistant_content, ensure_ascii=False))
-                
-                messages.append({"role": "assistant", "content": assistant_content})
-                
-                tool_blocks = [b for b in message_obj.content if b.type == 'tool_use']
-                
-                if not tool_blocks:
-                    yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
-                    yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-                    break
-                
-                # 도구 실행
-                tool_results = []
-                for tool in tool_blocks:
-                    yield f"data: {json.dumps({'type': 'tool_execution', 'name': tool.name, 'input': tool.input})}\n\n"
-                    
-                    try:
-                        result = await self.call_tool(tool.name, tool.input, user_api_key)
-                        yield f"data: {json.dumps({'type': 'tool_result', 'name': tool.name, 'result': result})}\n\n"
+                    for event in stream:
+                        if event.type == "content_block_start":
+                            current_block_type = event.content_block.type
+                            if current_block_type == "thinking":
+                                yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
+                            elif current_block_type == "text":
+                                yield f"data: {json.dumps({'type': 'text_start'})}\n\n"
+                            elif current_block_type == "tool_use":
+                                yield f"data: {json.dumps({'type': 'tool_use_start', 'name': event.content_block.name})}\n\n"
                         
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool.id,
-                            "content": result
-                        })
-                    except Exception as e:
-                        error_msg = str(e)
-                        yield f"data: {json.dumps({'type': 'tool_error', 'name': tool.name, 'error': error_msg})}\n\n"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool.id,
-                            "content": f"오류: {error_msg}"
-                        })
+                        elif event.type == "content_block_delta":
+                            if event.delta.type == "thinking_delta":
+                                thinking_text += event.delta.thinking
+                                yield f"data: {json.dumps({'type': 'thinking_delta', 'text': event.delta.thinking})}\n\n"
+                                await asyncio.sleep(0)
+                            elif event.delta.type == "text_delta":
+                                yield f"data: {json.dumps({'type': 'text_delta', 'text': event.delta.text})}\n\n"
+                                await asyncio.sleep(0)
+                        
+                        elif event.type == "content_block_stop":
+                            if current_block_type == "thinking":
+                                yield f"data: {json.dumps({'type': 'thinking_stop'})}\n\n"
+                                thinking_text = ""
                 
-                # 도구 결과를 DB에 저장하고 메시지에 추가
-                self.db.save_message(session_id, "user", json.dumps(tool_results, ensure_ascii=False))
-                messages.append({"role": "user", "content": tool_results})
-                
-                self.add_cache_control_to_messages(messages)
+                    # Usage 로그 출력 및 메시지 추출
+                    message_obj = stream.get_final_message()
+                    usage = message_obj.usage                
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] USAGE - Input: {usage.input_tokens}, Output: {usage.output_tokens}, Cache Create: {usage.cache_creation_input_tokens}, Cache Read: {usage.cache_read_input_tokens}")
+                    
+                    # response_content를 JSON 직렬화 가능한 형태로 변환
+                    assistant_content = []
+                    for block in message_obj.content:
+                        if hasattr(block, 'model_dump'):
+                            assistant_content.append(block.model_dump())
+                        else:
+                            assistant_content.append({"type": "text", "text": str(block)})
+                    
+                    # 어시스턴트 응답을 데이터베이스에 저장
+                    self.db.save_message(session_id, "assistant", json.dumps(assistant_content, ensure_ascii=False))
+                    
+                    messages.append({"role": "assistant", "content": assistant_content})
+                    
+                    tool_blocks = [b for b in message_obj.content if b.type == 'tool_use']
+                    
+                    if not tool_blocks:
+                        yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
+                        yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                        break
+                    
+                    # 도구 실행
+                    tool_results = []
+                    for tool in tool_blocks:
+                        yield f"data: {json.dumps({'type': 'tool_execution', 'name': tool.name, 'input': tool.input})}\n\n"
+                        
+                        try:
+                            result = await self.call_tool(tool.name, tool.input, user_api_key)
+                            
+                            # 결과 검증
+                            if result is None:
+                                result = {"error": "Tool execution returned no result"}
+                            
+                            yield f"data: {json.dumps({'type': 'tool_result', 'name': tool.name, 'result': result})}\n\n"
+                            
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool.id,
+                                "content": result
+                            })
+                        except Exception as e:
+                            error_msg = str(e)
+                            yield f"data: {json.dumps({'type': 'tool_error', 'name': tool.name, 'error': error_msg})}\n\n"
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool.id,
+                                "content": f"오류: {error_msg}"
+                            })
+                    
+                    # 도구 결과를 DB에 저장하고 메시지에 추가
+                    self.db.save_message(session_id, "user", json.dumps(tool_results, ensure_ascii=False))
+                    messages.append({"role": "user", "content": tool_results})
+                    
+                    self.add_cache_control_to_messages(messages)
+                        
+            except Exception as e:
+                error_str = str(e)
+                if "overloaded_error" in error_str:
+                    yield f"data: {json.dumps({'type': 'api_overloaded', 'message': 'API가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.'})}\n\n"
+                    await asyncio.sleep(2)
+                    continue  # 다시 while True 루프 시도
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'API 요청 실패: {error_str}'})}\n\n"
+                    return
 
 # 전역 인스턴스
 claude_backend = ClaudeMCPBackend()
@@ -1371,7 +1417,7 @@ async def create_workflow_with_api_key(workflow: ApiKeyWorkflowCreate, current_u
         )
         print(f"[DEBUG] 워크플로우 등록 성공: {workflow_id}")
         return {"workflow_id": workflow_id, "user_id": current_user["user_id"]}
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         print(f"[DEBUG] 워크플로우 등록 실패: 이미 등록된 워크플로우")
         raise HTTPException(status_code=400, detail="이미 등록된 워크플로우입니다")
 
@@ -1431,46 +1477,46 @@ async def get_workflow_json(workflow_id: str, current_user: dict = Depends(verif
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"워크플로우 데이터 조회 실패: {str(e)}")
 
-@app.delete("/workflows/{n8n_workflow_id}", response_model=MessageResponse)
-async def delete_workflow(n8n_workflow_id: str, current_user: dict = Depends(verify_token)):
+@app.delete("/workflows/{workflow_id}", response_model=MessageResponse)
+async def delete_workflow(workflow_id: str, current_user: dict = Depends(verify_token)):
     """워크플로우 삭제 (n8n과 백엔드 DB 모두에서 삭제)"""
     # 워크플로우 존재 확인
-    existing_workflow = claude_backend.db.get_workflow_by_id(n8n_workflow_id, current_user["user_id"])
+    existing_workflow = claude_backend.db.get_workflow_by_id(workflow_id, current_user["user_id"])
     if not existing_workflow:
         raise HTTPException(status_code=404, detail="워크플로우를 찾을 수 없습니다")
     
     # 먼저 n8n에서 워크플로우 삭제
-    n8n_success = await delete_workflow_in_n8n(n8n_workflow_id)
+    n8n_success = await delete_workflow_in_n8n(workflow_id)
     if not n8n_success:
         raise HTTPException(status_code=500, detail="n8n에서 워크플로우 삭제에 실패했습니다")
     
     # n8n 성공 시 백엔드 DB에서도 삭제
-    claude_backend.db.delete_workflow(n8n_workflow_id, current_user["user_id"])
+    claude_backend.db.delete_workflow(workflow_id, current_user["user_id"])
     return MessageResponse(message="워크플로우가 삭제되었습니다")
 
-@app.put("/workflows/{n8n_workflow_id}/name")
-async def update_workflow_name(n8n_workflow_id: str, workflow_update: WorkflowNameUpdate, current_user: dict = Depends(verify_token)):
+@app.put("/workflows/{workflow_id}/name")
+async def update_workflow_name(workflow_id: str, workflow_update: WorkflowNameUpdate, current_user: dict = Depends(verify_token)):
     """워크플로우 이름 변경 (n8n과 백엔드 DB 모두 업데이트)"""
     # 먼저 n8n에서 워크플로우 이름 변경
-    n8n_success = await update_workflow_in_n8n(n8n_workflow_id, workflow_update.name)
+    n8n_success = await update_workflow_in_n8n(workflow_id, workflow_update.name)
     if not n8n_success:
         raise HTTPException(status_code=500, detail="n8n에서 워크플로우 이름 변경에 실패했습니다")
     
     # n8n 성공 시 백엔드 DB도 업데이트
-    db_success = claude_backend.db.update_workflow_name(n8n_workflow_id, workflow_update.name, current_user["user_id"])
+    db_success = claude_backend.db.update_workflow_name(workflow_id, workflow_update.name, current_user["user_id"])
     if not db_success:
         raise HTTPException(status_code=404, detail="워크플로우를 찾을 수 없습니다")
     
     return MessageResponse(message=f"워크플로우 이름이 '{workflow_update.name}'으로 변경되었습니다")
 
-@app.post("/workflows/{n8n_workflow_id}/toggle", response_model=MessageResponse)
-async def toggle_workflow_status(n8n_workflow_id: str, current_user: dict = Depends(verify_token)):
+@app.post("/workflows/{workflow_id}/toggle", response_model=MessageResponse)
+async def toggle_workflow_status(workflow_id: str, current_user: dict = Depends(verify_token)):
     """워크플로우 활성화/비활성화 토글"""
     # 현재 상태 조회 (디버깅 추가)
-    workflow = claude_backend.db.get_workflow_by_id(n8n_workflow_id, current_user["user_id"])
+    workflow = claude_backend.db.get_workflow_by_id(workflow_id, current_user["user_id"])
     print(f"[DEBUG] 워크플로우 조회 결과: {workflow}")
     print(f"[DEBUG] 사용자 ID: {current_user['user_id']}")
-    print(f"[DEBUG] 워크플로우 ID: {n8n_workflow_id}")
+    print(f"[DEBUG] 워크플로우 ID: {workflow_id}")
     
     if not workflow:
         raise HTTPException(status_code=404, detail="워크플로우를 찾을 수 없습니다")
@@ -1480,12 +1526,12 @@ async def toggle_workflow_status(n8n_workflow_id: str, current_user: dict = Depe
     activate = new_status == "active"
     
     # n8n에서 상태 변경
-    n8n_success = await toggle_workflow_in_n8n(n8n_workflow_id, activate)
+    n8n_success = await toggle_workflow_in_n8n(workflow_id, activate)
     if not n8n_success:
         raise HTTPException(status_code=500, detail="n8n에서 워크플로우 상태 변경에 실패했습니다")
     
     # 백엔드 DB에서 상태 업데이트
-    db_success = claude_backend.db.update_workflow_status(n8n_workflow_id, new_status, current_user["user_id"])
+    db_success = claude_backend.db.update_workflow_status(workflow_id, new_status, current_user["user_id"])
     if not db_success:
         raise HTTPException(status_code=404, detail="워크플로우를 찾을 수 없습니다")
     
@@ -1520,10 +1566,10 @@ async def delete_project(project_id: str, current_user: dict = Depends(verify_to
     claude_backend.db.delete_project(project_id, current_user["user_id"])
     return MessageResponse(message="프로젝트가 삭제되었습니다")
 
-@app.put("/workflows/{n8n_workflow_id}/project", response_model=MessageResponse)
-async def assign_workflow_to_project(n8n_workflow_id: str, workflow_update: WorkflowProjectUpdate, current_user: dict = Depends(verify_token)):
+@app.put("/workflows/{workflow_id}/project", response_model=MessageResponse)
+async def assign_workflow_to_project(workflow_id: str, workflow_update: WorkflowProjectUpdate, current_user: dict = Depends(verify_token)):
     """워크플로우를 프로젝트에 할당 (project_id가 None이면 프로젝트에서 제거)"""
-    success = claude_backend.db.assign_workflow_to_project(n8n_workflow_id, workflow_update.project_id, current_user["user_id"])
+    success = claude_backend.db.assign_workflow_to_project(workflow_id, workflow_update.project_id, current_user["user_id"])
     if not success:
         raise HTTPException(status_code=404, detail="워크플로우를 찾을 수 없습니다")
     

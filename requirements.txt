@@ -2,7 +2,11 @@ anthropic
 python-dotenv
 fastapi
 uvicorn
+gunicorn
 httpx
 bcrypt
 PyJWT
 python-multipart
+psycopg2-binary
+sqlalchemy
+alembic

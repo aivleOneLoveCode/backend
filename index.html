@@ -1181,7 +1181,7 @@
                 this.currentToolBlocks = new Map();
                 this.currentUser = null;
                 this.accessToken = null;
-                this.selectedN8nWorkflowId = null;
+                this.selectedWorkflowId = null;
                 this.listenersInitialized = false; // 리스너 중복 등록 방지
                 this.requestInProgress = new Set(); // 중복 요청 방지
                 
@@ -1509,7 +1509,7 @@
             
             startNewChat() {
                 this.currentSessionId = null;  // null로 설정하면 백엔드에서 새 UUID 생성
-                this.selectedN8nWorkflowId = null;  // 선택된 워크플로우 초기화
+                this.selectedWorkflowId = null;  // 선택된 워크플로우 초기화
                 this.messagesContainer.innerHTML = `
                     <div class="claude-response">
                         안녕하세요! n8n 자동화 전문가 Claude입니다. 워크플로우 설계와 관련해서 무엇이든 물어보세요.
@@ -2761,7 +2761,7 @@
                 const selectedItem = document.querySelector(`[data-workflow-id="${workflowId}"]`);
                 if (selectedItem) {
                     selectedItem.classList.add('active');
-                    this.selectedN8nWorkflowId = workflowId;
+                    this.selectedWorkflowId = workflowId;
                     
                     // 선택된 워크플로우 정보를 채팅 헤더에 표시
                     const workflowName = selectedItem.querySelector('.workflow-name').textContent;
