@@ -38,6 +38,9 @@ JWT_EXPIRATION_HOURS = 24
 
 security = HTTPBearer()
 
+# 중단 요청 저장 (간단한 set 사용)
+stop_requests = set()
+
 # Pydantic 모델들
 class UserRegister(BaseModel):
     email: str
@@ -438,6 +441,76 @@ class DatabaseManager:
                 messages.append({"role": role, "content": [{"type": "text", "text": content_json}]})
         
         return messages
+    
+    def get_session_messages_for_frontend(self, session_id: str, user_id: str):
+        """세션의 메시지 기록을 조회 (프론트엔드용 - 메타데이터 제거)"""
+        # 원본 메시지 가져오기
+        messages = self.get_session_messages(session_id, user_id)
+        
+        # 메타데이터 제거한 깔끔한 메시지 반환
+        cleaned_messages = []
+        for msg in messages:
+            cleaned_msg = {
+                "role": msg["role"],
+                "content": []
+            }
+            
+            # content 배열의 각 블록에서 메타데이터 제거
+            for block in msg["content"]:
+                if block.get("type") == "thinking":
+                    cleaned_msg["content"].append({
+                        "type": "thinking",
+                        "thinking": block.get("thinking", "")
+                    })
+                elif block.get("type") == "text":
+                    cleaned_msg["content"].append({
+                        "type": "text", 
+                        "text": block.get("text", "")
+                    })
+                elif block.get("type") == "tool_use":
+                    cleaned_msg["content"].append({
+                        "type": "tool_use",
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("input")
+                    })
+                elif block.get("type") == "tool_result":
+                    # tool_result content가 JSON 문자열인 경우 파싱
+                    content = block.get("content")
+                    if isinstance(content, str):
+                        try:
+                            content = json.loads(content)
+                        except (json.JSONDecodeError, TypeError):
+                            # JSON 파싱 실패 시 원본 문자열 유지
+                            pass
+                    
+                    cleaned_msg["content"].append({
+                        "type": "tool_result",
+                        "tool_use_id": block.get("tool_use_id"),
+                        "content": content
+                    })
+                elif block.get("type") == "image":
+                    cleaned_msg["content"].append({
+                        "type": "image",
+                        "source": block.get("source")
+                    })
+                elif block.get("type") == "document":
+                    cleaned_msg["content"].append({
+                        "type": "document",
+                        "name": block.get("name"),
+                        "source": block.get("source")
+                    })
+                else:
+                    # 기타 블록 타입은 type과 주요 필드만 유지
+                    cleaned_block = {"type": block.get("type")}
+                    for key in ["text", "data"]:
+                        if key in block:
+                            cleaned_block[key] = block[key]
+                    cleaned_msg["content"].append(cleaned_block)
+            
+            cleaned_messages.append(cleaned_msg)
+        
+        return cleaned_messages
     
     # 워크플로우 메서드
     def create_workflow(self, user_id: str, workflow_id: str, name: str = "Untitled Workflow"):
@@ -945,7 +1018,24 @@ class ClaudeMCPBackend:
             }, headers=headers)
             
             result = response.json().get("result", {})
-            return json.dumps(result.get("content", result), ensure_ascii=False, indent=2)
+            raw_content = result.get("content", result)
+            
+            # MCP 응답에서 text 내용만 추출
+            if isinstance(raw_content, list) and len(raw_content) > 0:
+                first_block = raw_content[0]
+                if isinstance(first_block, dict) and first_block.get("type") == "text":
+                    text_content = first_block.get("text", "")
+                    
+                    # JSON 문자열이면 파싱해서 객체로 반환
+                    try:
+                        parsed_json = json.loads(text_content)
+                        return parsed_json
+                    except json.JSONDecodeError:
+                        # JSON이 아니면 문자열 그대로 반환
+                        return text_content
+            
+            # 배열이 아니면 그대로 반환
+            return str(raw_content)
     
     def add_cache_control_to_messages(self, messages):
         if not messages:
@@ -1028,8 +1118,8 @@ class ClaudeMCPBackend:
         current_user = self.db.get_user_by_id(user_id)
         user_api_key = current_user.get('api_key', '') if current_user else ''
         
-        # 8. While 문 돌기
-        while True:
+        # 8. While 문 돌기 (중단 요청이 없으면 계속)
+        while session_id not in stop_requests:
             try:
                 with self.anthropic.messages.stream(
                     model="claude-sonnet-4-20250514",
@@ -1052,7 +1142,9 @@ class ClaudeMCPBackend:
                             elif current_block_type == "text":
                                 yield f"data: {json.dumps({'type': 'text_start'})}\n\n"
                             elif current_block_type == "tool_use":
-                                yield f"data: {json.dumps({'type': 'tool_use_start', 'name': event.content_block.name})}\n\n"
+                                # tool_use 시작 시 input은 빈 객체일 수 있음
+                                tool_input = getattr(event.content_block, 'input', {})
+                                yield f"data: {json.dumps({'type': 'tool_use_start', 'id': event.content_block.id, 'name': event.content_block.name, 'input': tool_input})}\n\n"
                         
                         elif event.type == "content_block_delta":
                             if event.delta.type == "thinking_delta":
@@ -1072,6 +1164,11 @@ class ClaudeMCPBackend:
                     message_obj = stream.get_final_message()
                     usage = message_obj.usage                
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] USAGE - Input: {usage.input_tokens}, Output: {usage.output_tokens}, Cache Create: {usage.cache_creation_input_tokens}, Cache Read: {usage.cache_read_input_tokens}")
+                    
+                    # 완성된 tool_use의 input 정보를 스트리밍으로 전송
+                    for block in message_obj.content:
+                        if hasattr(block, 'type') and block.type == 'tool_use':
+                            yield f"data: {json.dumps({'type': 'tool_use_complete', 'id': block.id, 'name': block.name, 'input': block.input})}\n\n"
                     
                     # response_content를 JSON 직렬화 가능한 형태로 변환
                     assistant_content = []
@@ -1105,12 +1202,15 @@ class ClaudeMCPBackend:
                             if result is None:
                                 result = {"error": "Tool execution returned no result"}
                             
-                            yield f"data: {json.dumps({'type': 'tool_result', 'name': tool.name, 'result': result})}\n\n"
+                            yield f"data: {json.dumps({'type': 'tool_result', 'tool_use_id': tool.id, 'content': result})}\n\n"
+                            
+                            # Anthropic API는 tool_result content가 문자열이어야 함
+                            content_str = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
                             
                             tool_results.append({
                                 "type": "tool_result",
                                 "tool_use_id": tool.id,
-                                "content": result
+                                "content": content_str
                             })
                         except Exception as e:
                             error_msg = str(e)
@@ -1129,13 +1229,19 @@ class ClaudeMCPBackend:
                         
             except Exception as e:
                 error_str = str(e)
+                print(f"[ERROR] API 요청 실패: {error_str}")
                 if "overloaded_error" in error_str:
-                    yield f"data: {json.dumps({'type': 'api_overloaded', 'message': 'API가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.'})}\n\n"
+                    print(f"[WARNING] API 과부하 - 2초 후 재시도")
                     await asyncio.sleep(2)
-                    continue  # 다시 while True 루프 시도
+                    continue  # 다시 while 루프 시도
                 else:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'API 요청 실패: {error_str}'})}\n\n"
+                    print(f"[ERROR] 복구 불가능한 오류 발생: {error_str}")
                     return
+        
+        # while 루프 종료 - 중단 요청 처리
+        if session_id in stop_requests:
+            stop_requests.discard(session_id)  # 중단 요청 제거
+            print(f"[INFO] 세션 {session_id} 중단 처리 완료")
 
 # 전역 인스턴스
 claude_backend = ClaudeMCPBackend()
@@ -1362,6 +1468,16 @@ async def chat(request: ChatRequest, current_user: dict = Depends(verify_token))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/chat/stop/{session_id}")
+async def stop_chat(session_id: str, current_user: dict = Depends(verify_token)):
+    """채팅 중단 요청"""
+    try:
+        # 중단 요청 추가
+        stop_requests.add(session_id)
+        return {"message": "Stop request received", "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/sessions")
 async def get_user_sessions(current_user: dict = Depends(verify_token)):
     """사용자의 세션 목록 조회"""
@@ -1372,8 +1488,8 @@ async def get_user_sessions(current_user: dict = Depends(verify_token)):
 async def get_session_info(session_id: str, current_user: dict = Depends(verify_token)):
     """세션 정보 및 메시지 조회"""
     try:
-        # 메시지 조회 (권한 확인 포함)
-        messages = claude_backend.db.get_session_messages(session_id, current_user["user_id"])
+        # 프론트엔드용 메시지 조회 (메타데이터 제거된 버전)
+        messages = claude_backend.db.get_session_messages_for_frontend(session_id, current_user["user_id"])
         
         # 세션 정보 조회
         sessions = claude_backend.db.get_user_sessions(current_user["user_id"])
