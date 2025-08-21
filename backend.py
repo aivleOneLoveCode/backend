@@ -47,10 +47,16 @@ class UserRegister(BaseModel):
     first_name: str
     last_name: str
     password: str
+    marketing_consent: Optional[bool] = False
+    analytics_consent: Optional[bool] = False
 
 class UserLogin(BaseModel):
     email: str
     password: str
+
+class UserConsent(BaseModel):
+    marketing_consent: bool
+    analytics_consent: bool
 
 class ChatRequest(BaseModel):
     content: List[dict]  # content blocks array (text, image, document 등)
@@ -152,6 +158,9 @@ class DatabaseManager:
                 last_name VARCHAR(255) NOT NULL,
                 password VARCHAR(255) NOT NULL,
                 api_key VARCHAR(255),
+                marketing_consent BOOLEAN DEFAULT FALSE,
+                analytics_consent BOOLEAN DEFAULT FALSE,
+                consent_updated_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -230,7 +239,8 @@ class DatabaseManager:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] PostgreSQL database initialized")
     
     # 유저 메서드
-    def create_user(self, email: str, first_name: str, last_name: str, password: str):
+    def create_user(self, email: str, first_name: str, last_name: str, password: str, 
+                    marketing_consent: bool = False, analytics_consent: bool = False):
         """새 사용자 생성"""
         user_id = str(uuid.uuid4())
         api_key = str(uuid.uuid4())  # API 키 생성
@@ -241,9 +251,11 @@ class DatabaseManager:
         
         try:
             cursor.execute('''
-                INSERT INTO users (user_id, email, first_name, last_name, password, api_key)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (user_id, email, first_name, last_name, hashed_password, api_key))
+                INSERT INTO users (user_id, email, first_name, last_name, password, api_key, 
+                                 marketing_consent, analytics_consent, consent_updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ''', (user_id, email, first_name, last_name, hashed_password, api_key, 
+                  marketing_consent, analytics_consent))
             
             conn.commit()
             conn.close()
@@ -251,6 +263,48 @@ class DatabaseManager:
         except psycopg2.IntegrityError:
             conn.close()
             raise HTTPException(status_code=400, detail="이미 존재하는 이메일입니다")
+    
+    def get_user_profile(self, user_id: str):
+        """사용자 프로필 조회 (동의 정보 포함)"""
+        conn = self.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute('''
+            SELECT user_id, email, first_name, last_name, 
+                   marketing_consent, analytics_consent, 
+                   created_at, updated_at
+            FROM users WHERE user_id = %s
+        ''', (user_id,))
+        
+        user = cursor.fetchone()
+        conn.close()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        
+        return user
+    
+    def update_user_consent(self, user_id: str, marketing_consent: bool, analytics_consent: bool):
+        """사용자 동의 정보 업데이트"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE users 
+            SET marketing_consent = %s, analytics_consent = %s, 
+                consent_updated_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = %s
+        ''', (marketing_consent, analytics_consent, user_id))
+        
+        conn.commit()
+        conn.close()
+        
+        return {
+            "message": "동의 정보가 업데이트되었습니다",
+            "marketing_consent": marketing_consent,
+            "analytics_consent": analytics_consent
+        }
     
     def authenticate_user(self, email: str, password: str):
         """사용자 인증"""
@@ -1407,7 +1461,8 @@ async def delete_workflow_in_n8n(workflow_id: str):
 async def register(user: UserRegister):
     """회원가입"""
     user_id = claude_backend.db.create_user(
-        user.email, user.first_name, user.last_name, user.password
+        user.email, user.first_name, user.last_name, user.password,
+        user.marketing_consent, user.analytics_consent
     )
     
     user_data = UserResponse(
@@ -1475,6 +1530,29 @@ async def stop_chat(session_id: str, current_user: dict = Depends(verify_token))
         # 중단 요청 추가
         stop_requests.add(session_id)
         return {"message": "Stop request received", "session_id": session_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 사용자 프로필 관련 엔드포인트
+@app.get("/user/profile")
+async def get_user_profile(current_user: dict = Depends(verify_token)):
+    """사용자 프로필 조회 (동의 정보 포함)"""
+    try:
+        profile = claude_backend.db.get_user_profile(current_user["user_id"])
+        return profile
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/user/consent")
+async def update_user_consent(consent: UserConsent, current_user: dict = Depends(verify_token)):
+    """사용자 동의 정보 업데이트"""
+    try:
+        result = claude_backend.db.update_user_consent(
+            current_user["user_id"],
+            consent.marketing_consent,
+            consent.analytics_consent
+        )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
